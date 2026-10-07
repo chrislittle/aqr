@@ -149,6 +149,30 @@ create` commands for an MG admin to run. Prerequisite from the Quota docs: `Micr
 
 No write roles (Quota Request Operator, GroupQuota Request Operator) in v1.
 
+### 4.3 Report visibility (decision D6 — admin-maintained mapping)
+
+Report visibility is **separate from Azure RBAC**. The sync identity reads everything; what a
+signed-in user sees is decided by AQR's own mapping, maintained by `AQR.Admin`s:
+
+| Grant | Target | Effect |
+|---|---|---|
+| Entra group (or user) → **management group** | MG ID | All subscriptions under that MG, resolved **at query time** from the stored MG path, so subscriptions moved in or out of the MG are picked up automatically |
+| Entra group → **quota group** | MG + group name | The group's pool, allocations and its current member subscriptions |
+| Entra group → **subscription** | Subscription ID | That subscription only |
+
+Rules:
+- **Deny by default.** A signed-in `AQR.Reader` with no mapping sees an empty state that names the
+  admin contact. They never see "everything".
+- `AQR.Admin` sees all data.
+- A user's scope is the **union** of all grants from their groups.
+- Scope is applied **server-side** as a subscription-ID filter on every query and API call. It's
+  never a UI-only filter, and it also applies to CSV export.
+- Group membership comes from the token's `groups` claim. If the user is in too many groups for the
+  token to list them (the group overage case), AQR resolves transitive membership through Microsoft
+  Graph with a cached lookup (requires the `GroupMember.Read.All` application permission), so large
+  tenants don't silently lose access.
+- Every mapping change is audited (who, when, before/after) in the data store.
+
 ## 5. Data store decision
 
 You asked for the easiest and fastest store **with an NSP in front of it**. NSP support decides
@@ -199,6 +223,61 @@ retention are included in the ingestion price; the rest is billed per GB per mon
   (documented NSP behavior: "allows inbound access authenticated using any managed identity from
   the subscription"). No IP rules. Optional admin IP rule for break-glass portal queries.
 - NSP access logs are sent to the same workspace for auditing.
+
+### 5.1 Store decision reopened — cost evidence (2026-10-07)
+
+> The Log Analytics recommendation above optimized for **build speed** (KQL does the filtering)
+> and NSP-GA status. It was **not priced**, and a log analytics service isn't a natural **system of
+> record**. Rows can't be corrected in place, and data lifetime is tied to a retention setting.
+> This section is the evidence for re-deciding.
+
+**Unit prices.** Azure Retail Prices API, `eastus2`, list price, pulled live 2026-10-07:
+
+| Store | Meter | Price |
+|---|---|---|
+| Log Analytics (Analytics plan) | Data ingestion | $2.76 / GB (first 5 GB/month per billing account free, shared with all other workspaces in that billing account) |
+| | Analytics retention beyond 31 days | $0.12 / GB-month |
+| | Long-term retention ("Data Archive") | $0.02 / GB-month; queried via search jobs at $0.005 / GB scanned |
+| Blob storage (GPv2, LRS) | Hot data stored | $0.0184 / GB-month; writes $0.05 / 10K |
+| | Cool data stored | $0.01 / GB-month; writes $0.10 / 10K |
+| Table storage (LRS) | Data stored | $0.045 / GB-month; any operation $0.00036 / 10K |
+| Azure SQL Database | Basic (5 DTU, 2 GB max) | $0.161 / day |
+| | Standard S0 (10 DTU, 250 GB included) | $0.4839 / day |
+
+**Volume model.** Every input here is an assumption until the sizing query in §9.2 is run against a
+real tenant: 200 subscriptions × 40 regions × 80 quota rows = 640,000 keys, ~350 bytes/row,
+hourly sync.
+
+| Write strategy | Ingested / month | Stored after 1 year | Log Analytics / month at year end | Blob hot / month | Table / month |
+|---|---|---|---|---|---|
+| Write-on-change (1 % of keys change per hour) | 1.6 GB | ~20 GB | ~$4.45 ingest + ~$2.35 retention | ~$0.36 | ~$0.88 |
+| Hourly full snapshot | 161 GB | ~1.9 TB | ~$445 ingest + ~$232 retention | ~$36 | ~$87 |
+
+Azure SQL S0 is a flat ~$14.70/month (0.4839 × 30.4) for either row, up to 250 GB. Basic's 2 GB
+cap is too small for a year of history.
+
+**What the numbers say**
+- Log Analytics charges **$2.76 per GB ingested**. Blob has no per-GB ingest charge, only
+  per-operation writes, which are negligible when a sync writes a few files. Keeping data
+  queryable costs **~6.5× blob hot** per GB-month ($0.12 vs $0.0184).
+- With write-on-change, every option is a few dollars a month, so cost doesn't decide between
+  them. Without write-on-change, Log Analytics is the most expensive by a wide margin.
+- Log Analytics' cost is highly sensitive to the write strategy and the row-size assumption. Blob
+  and SQL aren't.
+
+**Candidates for the system of record**
+
+| | Blob (Parquet) + embedded query engine (DuckDB) | Azure SQL Database (temporal tables) | Table storage | Log Analytics |
+|---|---|---|---|---|
+| NSP | **GA** (storage account) | **Public preview**; GA alternative is a private endpoint + VNet integration | **GA** | **GA** |
+| History / "as of" | Change files plus compacted current state; `arg_max` / window queries | **Native**: system-versioned temporal tables, `FOR SYSTEM_TIME AS OF` | Manual; weak | `arg_max` over time |
+| Rich filtering | SQL in-process over a small dataset (MBs–GBs) | SQL with indexes | Only PartitionKey/RowKey; everything else in app memory | KQL |
+| Durability / control | Versioning, soft delete, immutability, lifecycle to cool | PITR backups, LTR backups | Basic | Retention-bound; purge only |
+| Cost at modeled volume | Lowest (cents) | ~$15 / month flat | Low | Low with write-on-change, high without |
+| Build effort | Medium: compaction job + query layer | Low–medium: EF Core migrations; same stack as `ghcp-credit-visibility-azure` | High for reporting | Low |
+
+Mapping (D6) and the audit trail are small relational data. They fit SQL natively; with blob they'd
+need a small JSON document per grant set.
 
 ## 6. Regional quota vs zonal access (first-class requirement)
 
@@ -448,8 +527,13 @@ deployer lacks Graph permissions, a hook script does it instead.
 | D3 | History | **At least 1 year**: analytics retention 365 days on all AQR tables (§5) |
 | D4 | MVP quota types | VM family + Total Regional vCPUs only. Spot/low-priority and Dedicated Host → phase 2 |
 | D5 | Front door | Public App Service + Entra ID sign-in is acceptable for now |
+| D6 | Who sees what | **Admin-maintained mapping (option B below).** Report visibility is deliberately separate from Azure RBAC: someone can see a report without having access to the subscription in Azure, and Azure access doesn't grant report visibility (§4.3) |
 
 **Open**
+
+1. **Data store (system of record).** Under review; see §5.1.
+
+**Resolved — row-level scoping options considered (D6 chose B)**
 
 1. **Who sees which subscriptions (row-level scoping)?** App roles only control *whether* someone
    can use AQR. This question is about *which data* they see once signed in. Options:
@@ -461,6 +545,5 @@ deployer lacks Graph permissions, a hook script does it instead.
    | **C. Mirror Azure RBAC** | AQR shows only subscriptions the signed-in user can already read in Azure (checked with their own token via ARG, cached per user) | No mapping to maintain; never shows more than the user could see in the portal anyway | Needs a delegated Azure Resource Manager permission on the app registration; per-user lookup on sign-in |
 
    Quota data isn't secret in itself, but usage per family and region reveals what a team runs and
-   where. **A** fits if AQR's audience is the platform/capacity team. **C** fits if app teams will
-   use it too. v1 can ship with **A** and add **C** without changing the data model, because every
-   row already carries `SubscriptionId`.
+   where. **B was chosen** because it keeps reporting visibility independent of Azure RBAC.
+   C would couple the two, which is exactly what we want to avoid. A gives no separation at all.
