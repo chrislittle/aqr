@@ -28,7 +28,7 @@
     <a class="signout" href="#">Sign out</a>
   </div>
 </header>
-<div class="mockbanner">⚠ UI mockup — <b>synthetic data</b> (Contoso tenant, 8 subscriptions, 2 quota groups). Family names follow Azure quota naming; numbers are invented.</div>
+<div class="mockbanner">⚠ UI mockup — <b>synthetic data</b> (Contoso tenant, 8 subscriptions, 2 quota groups). MVP scope: VM family + Total Regional vCPU quota. Family names follow Azure quota naming; numbers are invented.</div>
 
 <main class="wrap">
 
@@ -38,7 +38,7 @@
     <div><h1>VM quota overview</h1><div class="sub">Regional vCPU quota, zonal SKU access and Quota Groups across your management groups</div></div>
     <div class="headtools">
       <span class="scope"><span class="dot"></span>Scope: mg-contoso (root) · 8 subscriptions</span>
-      <span class="pick">🕘 <select><option>Snapshot · 07 Oct 2026 13:00 UTC</option><option>07 Oct 2026 12:00 UTC</option><option>06 Oct 2026 13:00 UTC</option></select></span>
+      <span class="pick">🕘 <select><option>As of now · synced 07 Oct 2026 13:00 UTC</option><option>As of 01 Oct 2026</option><option>As of 01 Jul 2026</option><option>As of 01 Jan 2026</option></select></span>
     </div>
   </div>
   <div class="kpis" id="ov-kpis"></div>
@@ -155,10 +155,10 @@
 <!-- ============================ TRENDS ============================ -->
 <section class="page" id="p-trends">
   <div class="pagehead">
-    <div><h1>Trends</h1><div class="sub">Usage vs limit over time from hourly snapshots (90-day retention)</div></div>
+    <div><h1>Trends</h1><div class="sub">Usage vs limit over time · write-on-change history with 1-year retention · any past date can be reported as-of</div></div>
     <div class="headtools">
       <span class="pick">🧩 <select id="t-key"></select></span>
-      <span class="seg" id="t-range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button></span>
+      <span class="seg" id="t-range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button><button data-d="365">1y</button></span>
     </div>
   </div>
   <div class="grid">

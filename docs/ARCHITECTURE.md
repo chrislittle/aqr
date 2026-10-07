@@ -39,6 +39,8 @@ by region, zone, VM family, CPU manufacturer, accelerator, generation, lifecycle
 
 **Non-goals (v1)**
 - Requesting/transferring quota (read-only first; write actions are a later phase).
+- Spot / low-priority quota (`lowPriorityCores`) and Dedicated Host quota. Phase 2 (§12).
+- Multiple tenants. v1 is **single tenant** (one Entra tenant, one set of management groups).
 - Non-compute services (Network, ML, HPC Cache, Storage, Purview via `Microsoft.Quota/usages`) —
   planned for phase 3 (§12).
 - Real-time capacity guarantees. Zonal *access* (subscription restriction) is reportable; physical
@@ -51,7 +53,7 @@ identity; nothing is scraped.
 
 | # | Source | What AQR takes from it | Call shape | Cadence (default) |
 |---|---|---|---|---|
-| S1 | **Azure Resource Graph — `QuotaResources`** table, type `microsoft.compute/locations/usages` | Per-sub, per-region usage and limit for every compute quota (`cores`, `lowPriorityCores`, `virtualMachines`, every `standard*Family`) | One paged KQL query across all in-scope subscriptions (`mv-expand properties.value`) | Hourly |
+| S1 | **Azure Resource Graph — `QuotaResources`** table, type `microsoft.compute/locations/usages` | Per-sub, per-region usage and limit for `cores` (Total Regional vCPUs) and every `standard*Family`. Other rows in the payload (`lowPriorityCores`, dedicated hosts, VM/VMSS counts) are dropped in v1 | One paged KQL query across all in-scope subscriptions (`mv-expand properties.value`) | Hourly |
 | S2 | **Compute Usages API** `GET /subscriptions/{id}/providers/Microsoft.Compute/locations/{loc}/usages` | Fallback / reconciliation for any subscription-region missing from S1 | Per sub × region | Only on gap |
 | S3 | **Quota Groups API** `Microsoft.Quota` **2025-09-01** (GA) | Groups, members, group limits, unallocated pool, per-sub allocations, group usage | MG-scoped REST (§3.1) | Every 4 h |
 | S4 | **Compute Resource SKUs API** `GET /subscriptions/{id}/providers/Microsoft.Compute/skus?$filter=location eq '{loc}'` | SKU → family mapping, vCPUs, memory, GPUs, `CpuArchitectureType`, RDMA, offered zones, **per-subscription region and zone restrictions** | Per sub × in-scope region | Daily |
@@ -173,11 +175,19 @@ checked 2026-10-07):
 - *Ingestion latency* (minutes): the UI shows "as of" from `AQRSyncRun_CL`, not wall-clock.
 - *Query latency* (~1–3 s): the app caches each query result keyed by `SnapshotId`. Data only changes
   once per sync cycle, so cache hit rates are high.
-- *Cost scales with GB ingested.* Volume controls: (a) slim typed columns; (b) region scope
-  (`AQR_REGIONS`, default = regions with any usage or non-zero group quota); (c) SKU availability
-  stored at **family** grain plus **only restricted SKU rows** (§6.3); (d) per-table retention. The
-  doc deliberately doesn't quote a dollar figure. Size it with the Azure Pricing Calculator against
-  the row counts the first sync logs in `AQRSyncRun_CL`.
+- *Cost scales with GB ingested and retained.* The main control is **write-on-change** (§9.1): a
+  quota row is written only when its usage or limit changes, so unused regions cost almost nothing
+  and **no region filter is needed** (§9.2). Also: slim typed columns, and SKU availability stored
+  at **family** grain plus only restricted SKU rows (§6.3). The doc deliberately doesn't quote a
+  dollar figure. Size it with the Azure Pricing Calculator against the measured row counts (§9.2).
+
+**Retention: 1 year minimum.** Analytics-plan tables can be kept fully queryable for up to 730 days
+and in long-term retention for up to 12 years
+([Learn: data retention](https://learn.microsoft.com/azure/azure-monitor/logs/data-retention-configure)).
+AQR sets **analytics retention = 365 days** on every `AQR*_CL` table (`AQR_RETENTION_DAYS`, default
+365, max 730). Optional total retention beyond that (`AQR_TOTAL_RETENTION_DAYS`) uses long-term
+retention, which is cheaper but needs search jobs to query. Only the first 31 days of analytics
+retention are included in the ingestion price; the rest is billed per GB per month.
 - *Query API limits* (rows/size per query): every UI query aggregates server-side and pages.
 
 **NSP configuration**
@@ -242,7 +252,7 @@ HighPerformanceCompute.
 | Scope | Tenant / management group / quota group / subscription(s) | S3, S6 |
 | Geography → Region | e.g. United States → eastus, eastus2… | S5 region metadata (`geographyGroup`, `physicalLocation`) |
 | Zone access | Regional · AllZones · PartialZones · NoZones · RegionBlocked; "must be open in zone(s) …" (logical or physical) | §6 |
-| Quota type | Family · Total regional vCPUs (`cores`) · Spot/low-priority (`lowPriorityCores`) · VM count · other | Quota name |
+| Quota type | Family · Total regional vCPUs (`cores`) | Quota name. Spot/low-priority and Dedicated Host are phase 2 |
 | VM category | `VMCategory` values above | Catalog S7 |
 | VM family / series | standardDSv5Family, standardNCADSH100v5Family, … | S1 name ↔ S4 `family` |
 | CPU manufacturer | Intel · AMD · Microsoft (Cobalt) · Ampere | Catalog S7 (name rule `a`/`p` as fallback, never sole source) |
@@ -262,31 +272,44 @@ show as `Unclassified` rather than being guessed.
 
 ## 8. Data model (Log Analytics custom tables)
 
-All tables carry `TimeGenerated`, `SnapshotId` (guid per sync cycle), `TenantId`.
+All tables carry `TimeGenerated`, `SnapshotId` (the sync cycle that wrote the row), `TenantId`.
+Fact tables are **write-on-change** (§9.1). A row means "from this time, this key had these values".
+`IsDeleted = true` is a tombstone for a key that disappeared (subscription removed from scope, family
+no longer returned).
 
-| Table | Key | Main columns | Volume control |
+| Table | Key | Main columns | Write rule |
 |---|---|---|---|
-| `AQRSubQuota_CL` | Sub, Location, QuotaName | SubscriptionName, MgPath, QuotaLocalizedName, QuotaKind (`Family`/`RegionalTotal`/`LowPriority`/`Other`), Family, Usage, Limit, Unit, QuotaGroup | Regions in scope; skip rows with Limit = 0 and Usage = 0 except `cores` |
-| `AQRGroupQuota_CL` | MgId, Group, Location, Family | GroupLimit, AvailableLimit (unallocated), AllocatedTotal, GroupUsage, MemberCount | — |
-| `AQRGroupAlloc_CL` | MgId, Group, Sub, Location, Family | QuotaAllocated, ShareableQuota | — |
-| `AQRFamilyZone_CL` | Sub, Location, Family | ZoneStatus, SkusTotal, SkusRegionOpen, OpenZonesLogical, OpenZonesPhysical, RestrictedZonesLogical, OfferedZonesLogical, ReasonCodes | Daily; regions in scope |
-| `AQRSkuRestriction_CL` | Sub, Location, Sku | Family, RestrictionType (`Location`/`Zone`), ZonesLogical, ZonesPhysical, ReasonCode | Restricted SKUs only |
-| `AQRZoneMap_CL` | Sub, Location, ZoneLogical | ZonePhysical | Daily |
-| `AQRFamily_CL` | Family | Category, CpuManufacturer, Architecture, AcceleratorType, AcceleratorVendor, AcceleratorModel, Generation, Features, Lifecycle, MinVcpu, MaxVcpu, Source | Upsert on change |
-| `AQRSyncRun_CL` | SnapshotId | Stage, StartedAt, EndedAt, Status, SubsExpected, SubsCovered, RowsWritten, Throttled, Errors | Per stage |
+| `AQRSubQuota_CL` | Sub, Location, QuotaName | SubscriptionName, MgPath, QuotaLocalizedName, QuotaKind (`Family`/`RegionalTotal`), Family, Usage, Limit, Unit, QuotaGroup, IsDeleted | On change of Usage, Limit, QuotaGroup or name |
+| `AQRGroupQuota_CL` | MgId, Group, Location, Family | GroupLimit, AvailableLimit (unallocated), AllocatedTotal, GroupUsage, MemberCount, IsDeleted | On change |
+| `AQRGroupAlloc_CL` | MgId, Group, Sub, Location, Family | QuotaAllocated, ShareableQuota, IsDeleted | On change |
+| `AQRFamilyZone_CL` | Sub, Location, Family | ZoneStatus, SkusTotal, SkusRegionOpen, OpenZonesLogical, OpenZonesPhysical, RestrictedZonesLogical, OfferedZonesLogical, ReasonCodes, IsDeleted | On change |
+| `AQRSkuRestriction_CL` | Sub, Location, Sku | Family, RestrictionType (`Location`/`Zone`), ZonesLogical, ZonesPhysical, ReasonCode, IsDeleted | Restricted SKUs only; on change; tombstone when lifted |
+| `AQRZoneMap_CL` | Sub, Location, ZoneLogical | ZonePhysical | On change (effectively once per sub) |
+| `AQRFamily_CL` | Family | Category, CpuManufacturer, Architecture, AcceleratorType, AcceleratorVendor, AcceleratorModel, Generation, Features, Lifecycle, MinVcpu, MaxVcpu, Source | On change |
+| `AQRSyncRun_CL` | SnapshotId, Stage | StartedAt, EndedAt, Status, SubsExpected, SubsCovered, RowsSeen, RowsChanged, Throttled, Errors | Every run (this is the heartbeat) |
 
-Example — the explorer's base query (current state, joined):
+All tables: analytics retention = `AQR_RETENTION_DAYS` (default **365**).
+
+Example — the explorer's base query (current state = latest row per key, tombstones dropped):
 
 ```kusto
-let snap = toscalar(AQRSyncRun_CL | where Stage == "SubQuota" and Status == "Succeeded" | top 1 by EndedAt | project SnapshotId);
+let asOf = now();                      // or a user-picked point in time, for "as of" reports
 AQRSubQuota_CL
-| where SnapshotId == snap and QuotaKind == "Family"
+| where TimeGenerated <= asOf and QuotaKind == "Family"
+| summarize arg_max(TimeGenerated, *) by SubscriptionId, Location, QuotaName
+| where not(IsDeleted)
 | join kind=leftouter (AQRFamily_CL | summarize arg_max(TimeGenerated, *) by Family) on Family
-| join kind=leftouter (AQRFamilyZone_CL | summarize arg_max(TimeGenerated, *) by SubscriptionId, Location, Family) on SubscriptionId, Location, Family
+| join kind=leftouter (AQRFamilyZone_CL | where TimeGenerated <= asOf
+                       | summarize arg_max(TimeGenerated, *) by SubscriptionId, Location, Family
+                       | where not(IsDeleted)) on SubscriptionId, Location, Family
 | where Location in ({regions}) and CpuManufacturer in ({vendors}) and ZoneStatus in ({zoneStatus})
 | extend Available = Limit - Usage, UtilPct = iff(Limit > 0, 100.0 * Usage / Limit, real(null))
 | order by UtilPct desc
 ```
+
+The same query with `asOf` set to a past date answers "what did quota look like on 1 March?" for
+any date in the retention window. That's why write-on-change is a better fit than hourly full
+snapshots for a 1-year history: point-in-time reads stay exact.
 
 User-supplied filter values are passed as **query parameters / allow-listed enums**, never
 concatenated into KQL.
@@ -299,11 +322,52 @@ every AQR_SYNC_INTERVAL (default 1h) — leader holds blob lease
   2. SubQuota     ARG QuotaResources (paged, skipToken)            → AQRSubQuota_CL
                   gap check: subs/regions missing → Compute Usages API (S2)
   3. Groups       every 4h: per MG → groups → members → limits/usages per region → AQRGroup*_CL
-  4. Zones/SKUs   daily: per sub → locations (zone map) → skus?$filter=location per region in scope
+  4. Zones/SKUs   daily: per sub → locations (zone map) → skus?$filter=location per region
                   → AQRZoneMap_CL, AQRFamilyZone_CL, AQRSkuRestriction_CL
   5. Catalog      on startup/deploy: catalog/vm-families.json ⨝ observed families → AQRFamily_CL
   6. Record       AQRSyncRun_CL per stage (+ App Insights metrics)
 ```
+
+### 9.1 Write-on-change
+
+Each stage compares what it just read against the **last values written** per key. Those are held
+in a compact state blob (`state/{stage}.json.gz`, one hash per key) in the NSP-protected storage
+account. Only keys whose values changed are sent to the Logs Ingestion API. Keys that vanished get
+a tombstone row. `AQRSyncRun_CL` records `RowsSeen` and `RowsChanged` every run, so "nothing
+changed" and "sync didn't run" never look the same.
+
+If the state blob is lost or corrupt, the next run treats every key as changed and writes one full
+baseline. That's safe, just one larger ingestion.
+
+### 9.2 Region scope — measured, not guessed
+
+You asked how we'd know which regions matter. **We can't know in advance**, and the original
+"only regions with usage" default was a guess. It would also hide exactly what capacity planning
+needs: quota sitting in regions you haven't deployed to yet. So:
+
+- **Collect every region the APIs return.** No region filter in v1. ARG `QuotaResources` returns
+  the regions it has for each subscription, and AQR stores what's returned.
+- **Write-on-change makes that cheap.** A region nobody uses has a static limit and zero usage. It's
+  written **once** at baseline, then never again until something changes. Ingestion volume is
+  driven by **how often quota actually moves**, not by how many regions exist.
+- **The real numbers come from the first sync.** `AQRSyncRun_CL` records keys seen vs. changed per
+  run. After a week, that gives a measured daily change rate to put into the Pricing Calculator.
+- **Pre-deployment sizing (optional):** this read-only ARG query, run by someone with Reader in the
+  target tenant, gives the baseline row count before anything is deployed:
+
+```kusto
+QuotaResources
+| where type =~ "microsoft.compute/locations/usages"
+| mv-expand q = properties.value
+| extend name = tostring(q.name.value), usage = tolong(q.currentValue), limit = tolong(q.limit)
+| where name =~ "cores" or name endswith "Family"
+| summarize Rows = count(), Subs = dcount(subscriptionId), Regions = dcount(location),
+            RowsWithUsage = countif(usage > 0)
+```
+
+`Rows` is the baseline write. `RowsWithUsage` approximates the keys that can change hourly; the
+rest only change on quota increases or allocations. An `AQR_REGIONS` allow-list exists as an
+**optional** override for tenants that want to exclude regions by policy. It's off by default.
 
 - **Throttling:** ARG and ARM throttle per principal. The sync uses bounded concurrency
   (`AQR_MAX_PARALLEL`, default 4), honours `Retry-After`, and backs off on `429`. ARG queries batch
@@ -312,8 +376,8 @@ every AQR_SYNC_INTERVAL (default 1h) — leader holds blob lease
   shown on the Admin page. A stage that covers less than 100 % is a **warning**, not a silent success.
   Subscriptions without `Microsoft.Quota` registration, and MGs the identity can't read, are listed
   by name.
-- **Partial failure** never overwrites last-good. The UI reads the latest **succeeded** snapshot per
-  stage and shows each stage's own "as of" time.
+- **Partial failure** never writes tombstones. A subscription or region missing from a failed or
+  partial run is treated as "not observed", not "deleted". The UI shows each stage's own "as of" time.
 - **Raw archive:** each API response page is gzipped to blob (`raw/{date}/{stage}/…`), with a retention
   policy, for audit and replay.
 - **Manual refresh:** Admins can trigger a cycle (`POST /api/v1/sync`), still lease-guarded.
@@ -355,9 +419,9 @@ aqr/
 └─ docs/
 ```
 
-`azd env` settings: `AZURE_LOCATION`, `AQR_MANAGEMENT_GROUP_IDS`, `AQR_REGIONS` (optional),
-`AQR_SYNC_INTERVAL`, `AQR_NSP_MODE` (`Learning`/`Enforced`), `AQR_ADMIN_GROUP_ID`,
-`AQR_READER_GROUP_ID`.
+`azd env` settings: `AZURE_LOCATION`, `AQR_MANAGEMENT_GROUP_IDS`, `AQR_RETENTION_DAYS` (default 365),
+`AQR_REGIONS` (optional allow-list, off by default), `AQR_SYNC_INTERVAL`, `AQR_NSP_MODE`
+(`Learning`/`Enforced`), `AQR_ADMIN_GROUP_ID`, `AQR_READER_GROUP_ID`.
 Hooks: `preprovision` checks the deployer's az context against `AZURE_SUBSCRIPTION_ID` and fails on
 mismatch. `postprovision` prints MG RBAC commands if they weren't applied and triggers the first sync.
 The Entra app registration and FIC are created with the Microsoft Graph Bicep extension. If the
@@ -367,21 +431,36 @@ deployer lacks Graph permissions, a hook script does it instead.
 
 | Phase | Content |
 |---|---|
-| **1 — VM quota MVP** | Sync S1, S3–S7; Overview, Explorer, Quota Groups, Zones, Admin pages; Entra auth; NSP; `azd up` |
+| **1 — VM quota MVP** | Sync S1, S3–S7 (family + Total Regional vCPUs); Overview, Explorer, Quota Groups, Zones, Trends (1-year history), Admin pages; Entra auth; NSP; `azd up` |
 | 1.5 — API | OpenAPI/Swagger, CSV export, service-principal access |
-| 2 — Insight | Trends/forecast to limit, Workbooks + log alerts (threshold, "quota but zone-blocked"), group-rebalance suggestions (read-only), group request history |
+| 2 — Insight | Spot/low-priority and Dedicated Host quota; forecast to limit; Workbooks + log alerts (threshold, "quota but zone-blocked"); group-rebalance suggestions (read-only); group request history |
 | 3 — Beyond compute | `Microsoft.Quota/usages` providers (Network, MachineLearningServices, HPC Cache, Storage, Purview), service-specific usages APIs where the Quota RP doesn't cover them |
 | 4 — Actions (optional) | Quota increase / group allocate via Quota API with an approval step; needs the Quota Request Operator roles |
 
-## 13. Open questions
+## 13. Decisions and open questions
 
-1. **Row-level scoping:** should a reader see all subscriptions, or only those under MGs or quota
-   groups mapped to their Entra group (the GHCP-visibility pattern)? v1 assumes app-role-only.
-2. **Tenant count:** single tenant only, or multiple tenants (Lighthouse / multi-tenant app)? v1
-   assumes **single tenant**.
-3. **Region scope default:** all regions, or only regions with usage or quota allocations? Affects
-   ingestion volume.
-4. **History retention:** 90 days interactive is assumed. Is longer needed (archive tier)?
-5. **Spot/low-priority and Dedicated Host quota:** include in v1 or phase 2?
-6. **App front door:** is a public App Service with Entra auth acceptable, or is a private endpoint
-   plus internal access required? NSP doesn't cover App Service.
+**Decided (2026-10-07)**
+
+| # | Topic | Decision |
+|---|---|---|
+| D1 | Tenants | Single tenant for now |
+| D2 | Region scope | All regions the APIs return; write-on-change keeps it cheap; measure before tuning (§9.2) |
+| D3 | History | **At least 1 year**: analytics retention 365 days on all AQR tables (§5) |
+| D4 | MVP quota types | VM family + Total Regional vCPUs only. Spot/low-priority and Dedicated Host → phase 2 |
+| D5 | Front door | Public App Service + Entra ID sign-in is acceptable for now |
+
+**Open**
+
+1. **Who sees which subscriptions (row-level scoping)?** App roles only control *whether* someone
+   can use AQR. This question is about *which data* they see once signed in. Options:
+
+   | Option | How it works | Pros | Cons |
+   |---|---|---|---|
+   | **A. Everyone sees everything** | Anyone with `AQR.Reader` sees every subscription AQR syncs | Simplest; one query path; good for a central platform/capacity team | An app team member sees other teams' subscriptions, quota and usage |
+   | **B. Admin-maintained mapping** | Admins map Entra groups → management groups / quota groups / subscriptions in an Admin page (the GHCP-visibility cost-center pattern) | Tailored views; no dependency on Azure RBAC | Someone has to maintain the mapping; it drifts from real access |
+   | **C. Mirror Azure RBAC** | AQR shows only subscriptions the signed-in user can already read in Azure (checked with their own token via ARG, cached per user) | No mapping to maintain; never shows more than the user could see in the portal anyway | Needs a delegated Azure Resource Manager permission on the app registration; per-user lookup on sign-in |
+
+   Quota data isn't secret in itself, but usage per family and region reveals what a team runs and
+   where. **A** fits if AQR's audience is the platform/capacity team. **C** fits if app teams will
+   use it too. v1 can ship with **A** and add **C** without changing the data model, because every
+   row already carries `SubscriptionId`.

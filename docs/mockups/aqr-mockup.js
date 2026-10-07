@@ -136,7 +136,7 @@ function zoneInfo(sub, reg, fam){
 // ---------------------------------------------------------------- quota rows (S1)
 const LIMS=[10,20,50,100,150,200,350,500,800,1000,1500,2000];
 const ROWS=[]; // family rows
-const REGROWS=[]; // cores + lowPriorityCores
+const REGROWS=[]; // cores (Total Regional vCPUs). Spot/low-priority + Dedicated Host = phase 2
 SUBS.forEach(s=>s.regions.forEach(reg=>{
   let coreUse=0, coreLim=0;
   s.fams.forEach(fam=>{
@@ -157,8 +157,6 @@ SUBS.forEach(s=>s.regions.forEach(reg=>{
   });
   const cl = Math.max(coreLim, Math.ceil(coreLim*(.55+R()*.4)/50)*50);
   REGROWS.push({sub:s.name, group:s.group, reg, geo:REGBY[reg].geo, kind:'cores', name:'Total Regional vCPUs', use:coreUse, lim:Math.max(cl,coreUse), util:pct(coreUse,Math.max(cl,coreUse))});
-  const sl=pick([100,200,500,1000]), su=Math.round(sl*R()*.7);
-  REGROWS.push({sub:s.name, group:s.group, reg, geo:REGBY[reg].geo, kind:'lowPriorityCores', name:'Total Regional Low-priority vCPUs', use:su, lim:sl, util:pct(su,sl)});
 }));
 
 // group quotas (S3): per group × region × family
@@ -216,19 +214,18 @@ const CPUCOLOR={Intel:'#2563eb',AMD:'#e0533d',Microsoft:'#0f9d58',Ampere:'#7c3ae
 
 // ---------------------------------------------------------------- OVERVIEW
 function renderOverview(){
-  const cores=REGROWS.filter(r=>r.kind==='cores'), spot=REGROWS.filter(r=>r.kind==='lowPriorityCores');
+  const cores=REGROWS.filter(r=>r.kind==='cores');
   const cU=cores.reduce((a,r)=>a+r.use,0), cL=cores.reduce((a,r)=>a+r.lim,0);
   const hot=ROWS.filter(r=>r.util>=80), full=ROWS.filter(r=>r.util>=100);
   const unalloc=GQ.reduce((a,g)=>a+g.unalloc,0);
   const blocked=ROWS.filter(r=>r.avail>0&&(r.zi.status==='RegionBlocked'||r.zi.status==='NoZones'));
   const partial=ROWS.filter(r=>r.avail>0&&r.zi.status==='PartialZones');
-  const sU=spot.reduce((a,r)=>a+r.use,0), sL=spot.reduce((a,r)=>a+r.lim,0);
   $('ov-kpis').innerHTML=[
     ['b1','🧮','Regional vCPU quota',fmt(cL),`${fmt(cU)} in use · ${pct(cU,cL).toFixed(0)}%`,''],
     ['b5','🔥','Family quotas ≥ 80%',hot.length,`${full.length} at limit · of ${ROWS.length} family quotas`,'bad'],
     ['b2','👥','Quota group pool',fmt(unalloc),'unallocated vCPUs · 2 groups · not deployable until allocated',''],
     ['b4','🚧','Quota not deployable',blocked.length,`${fmt(blocked.reduce((a,r)=>a+r.avail,0))} vCPUs available but region/zone blocked · +${partial.length} partial-zone`,'bad'],
-    ['b3','⚡','Spot / low-priority',`${pct(sU,sL).toFixed(0)}%`,`${fmt(sU)} / ${fmt(sL)} vCPUs`,''],
+    ['b3','📈','Limit changes · 30 days','14',`+${fmt(5120)} vCPUs · 9 group allocations, 5 subscription increases`,'good'],
   ].map(([b,ic,l,v,n,c])=>`<div class="kpi ${b}"><div class="ic">${ic}</div><div class="label">${l}</div><div class="val">${v}</div><div class="note ${c}">${n}</div></div>`).join('');
 
   const top=[...ROWS].sort((a,b)=>b.util-a.util||b.lim-a.lim).slice(0,12);
@@ -267,7 +264,7 @@ function renderOverview(){
 
 // ---------------------------------------------------------------- EXPLORER
 const FILTERS=[
-  {k:'kind',t:'Quota type',single:true,opts:[['Family','VM family'],['cores','Total regional vCPUs'],['lowPriorityCores','Spot / low-priority']],def:['Family']},
+  {k:'kind',t:'Quota type',single:true,opts:[['Family','VM family'],['cores','Total regional vCPUs']],def:['Family']},
   {k:'sub',t:'Subscription',opts:SUBS.map(s=>[s.name,s.name.replace('sub-','')])},
   {k:'group',t:'Quota group',opts:[...GROUPS.map(g=>[g.name,g.name]),['(none)','not in a group']]},
   {k:'geo',t:'Geography',opts:['Americas','Europe','Asia Pacific'].map(x=>[x,x])},
@@ -436,8 +433,8 @@ function zoneSelectors(){
 // ---------------------------------------------------------------- TRENDS
 let TDAYS=30;
 const TKEYS=[...ROWS].sort((a,b)=>b.util-a.util).slice(0,10);
-function series(row){ const r2=rng(row.lim*7+row.use+row.reg.length); const n=90; const use=[], lim=[]; let L=Math.round(row.lim*.6/10)*10||row.lim, u=row.use*.55;
-  const bump=[55,78]; for(let i=0;i<n;i++){ if(i===bump[0]) L=Math.round(row.lim*.8); if(i===bump[1]) L=row.lim; u=Math.min(L, Math.max(0,u+(row.use-u)*.04+(r2()-.45)*row.lim*.03)); if(i===n-1) u=row.use; use.push(Math.round(u)); lim.push(L);} return {use,lim}; }
+function series(row){ const r2=rng(row.lim*7+row.use+row.reg.length); const n=365; const use=[], lim=[]; let L=Math.round(row.lim*.6/10)*10||row.lim, u=row.use*.55;
+  const bump=[250,330]; for(let i=0;i<n;i++){ if(i===bump[0]) L=Math.round(row.lim*.8); if(i===bump[1]) L=row.lim; u=Math.min(L, Math.max(0,u+(row.use-u)*.04+(r2()-.45)*row.lim*.03)); if(i===n-1) u=row.use; use.push(Math.round(u)); lim.push(L);} return {use,lim}; }
 function renderTrends(){
   const row=TKEYS[+$('t-key').value]; const s=series(row); const n=TDAYS; const U=s.use.slice(-n), L=s.lim.slice(-n);
   const alloc = null;
@@ -452,7 +449,7 @@ function renderTrends(){
     <div class="legend" style="flex-direction:row;gap:18px;margin-top:6px"><div class="row"><span class="sw" style="background:#2563eb"></span>usage</div><div class="row"><span class="sw" style="background:#d93025"></span>subscription limit (regional)${row.group?' · allocated from '+row.group:''}</div>${alloc?'<div class="row"><span class="sw" style="background:#7c3aed"></span>allocated from quota group</div>':''}</div>
     <div class="note" style="margin-top:8px">Phase 2: projected date to reach the limit at the current 14-day growth rate.</div>`;
   const ch=[]; for(let i=1;i<s.lim.length;i++) if(s.lim[i]!==s.lim[i-1]) ch.push({i,from:s.lim[i-1],to:s.lim[i]});
-  $('t-log').innerHTML=ch.reverse().map(c=>{const d=new Date(Date.UTC(2026,9,7)-(89-c.i)*864e5).toISOString().slice(0,10);return `<div style="padding:8px 0;border-bottom:1px solid #f1f4f9"><b>${d}</b> · limit ${fmt(c.from)} → <b>${fmt(c.to)}</b> <span class="badge ok">+${fmt(c.to-c.from)}</span><div class="note">${row.group?'group allocation to subscription (GroupQuotaSubscriptionAllocation)':'subscription quota increase'}</div></div>`;}).join('')||'<div class="note">No limit changes in range.</div>';
+  $('t-log').innerHTML=ch.reverse().map(c=>{const d=new Date(Date.UTC(2026,9,7)-(s.lim.length-1-c.i)*864e5).toISOString().slice(0,10);return `<div style="padding:8px 0;border-bottom:1px solid #f1f4f9"><b>${d}</b> · limit ${fmt(c.from)} → <b>${fmt(c.to)}</b> <span class="badge ok">+${fmt(c.to-c.from)}</span><div class="note">${row.group?'group allocation to subscription (GroupQuotaSubscriptionAllocation)':'subscription quota increase'}</div></div>`;}).join('')||'<div class="note">No limit changes in range.</div>';
 }
 
 // ---------------------------------------------------------------- FAMILIES
@@ -464,14 +461,14 @@ function renderFamilies(){
 
 // ---------------------------------------------------------------- ADMIN
 function renderAdmin(){
-  $('a-kpis').innerHTML=[['b3','✅','Last full sync','13:02 UTC','07 Oct 2026 · 4 min 12 s'],['b1','🧾','Subscriptions covered','8 / 8','QuotaResources · all expected subs'],['b4','⚠️','Warnings','2','see coverage gaps'],['b2','📦','Rows ingested (24 h)',fmt(48216),'AQRSubQuota_CL + 7 tables']]
+  $('a-kpis').innerHTML=[['b3','✅','Last full sync','13:02 UTC','07 Oct 2026 · 4 min 12 s'],['b1','🧾','Subscriptions covered','8 / 8','QuotaResources · all expected subs'],['b4','⚠️','Warnings','2','see coverage gaps'],['b2','📦','Rows changed (24 h)',fmt(1312),`of ${fmt(52416)} keys seen · write-on-change`]]
     .map(([b,ic,l,v,n])=>`<div class="kpi ${b}"><div class="ic">${ic}</div><div class="label">${l}</div><div class="val">${v}</div><div class="note">${n}</div></div>`).join('');
-  const runs=[['13:00','SubQuota','ARG QuotaResources','8/8','2,184','0','Succeeded'],['13:01','Groups','Microsoft.Quota groupQuotas','2/2 groups','412','0','Succeeded'],['12:00','SubQuota','ARG QuotaResources','8/8','2,180','0','Succeeded'],
-    ['09:00','Groups','Microsoft.Quota groupQuotas','2/2 groups','409','3','Succeeded'],['02:00','Zones/SKUs','Resource SKUs + locations','7/8','3,912','11','Warning'],['01:00','Catalog','vm-families.json ⨝ observed','28 families','28','0','Succeeded']];
-  $('a-runs').innerHTML='<thead><tr><th>Start</th><th>Stage</th><th>Source</th><th>Coverage</th><th class="num">Rows</th><th class="num">429s</th><th>Status</th></tr></thead><tbody>'+runs.map(r=>`<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td class="num">${r[4]}</td><td class="num">${r[5]}</td><td>${r[6]==='Succeeded'?'<span class="badge ok">succeeded</span>':'<span class="badge warnb">warning</span>'}</td></tr>`).join('')+'</tbody>';
+  const runs=[['13:00','SubQuota','ARG QuotaResources','8/8','2,184 / 37','0','Succeeded'],['13:01','Groups','Microsoft.Quota groupQuotas','2/2 groups','412 / 3','0','Succeeded'],['12:00','SubQuota','ARG QuotaResources','8/8','2,180 / 0','0','Succeeded'],
+    ['09:00','Groups','Microsoft.Quota groupQuotas','2/2 groups','409 / 6','3','Succeeded'],['02:00','Zones/SKUs','Resource SKUs + locations','7/8','3,912 / 21','11','Warning'],['01:00','Catalog','vm-families.json ⨝ observed','28 families','28 / 0','0','Succeeded']];
+  $('a-runs').innerHTML='<thead><tr><th>Start</th><th>Stage</th><th>Source</th><th>Coverage</th><th class="num">Keys seen / changed</th><th class="num">429s</th><th>Status</th></tr></thead><tbody>'+runs.map(r=>`<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td>${r[2]}</td><td>${r[3]}</td><td class="num">${r[4]}</td><td class="num">${r[5]}</td><td>${r[6]==='Succeeded'?'<span class="badge ok">succeeded</span>':'<span class="badge warnb">warning</span>'}</td></tr>`).join('')+'</tbody>';
   $('a-gaps').innerHTML=`<div style="padding:6px 0;border-bottom:1px solid #f1f4f9"><span class="badge warnb">zones</span> <b>sub-sandbox-01</b>: Resource SKUs call returned 403 for <code>southeastasia</code>. Zone data for that sub/region is from the previous successful run (06 Oct).</div>
     <div style="padding:6px 0"><span class="badge warnb">rp</span> <b>sub-dev-shared-01</b>: <code>Microsoft.Quota</code> not registered. Required before it can join a Quota Group (<a href="https://learn.microsoft.com/azure/quotas/quota-groups" target="_blank">Learn</a>).</div>`;
-  $('a-config').innerHTML=[['Management groups','mg-contoso (root)'],['Region scope','regions with usage or group quota (11)'],['Sync interval','SubQuota 1h · Groups 4h · Zones/SKUs daily'],['Data store','Log Analytics · law-aqr-prod (retention 90 d)'],['Network Security Perimeter','nsp-aqr · <span class="badge ok">Enforced</span> · inbound: AQR subscription (MI)'],['Identity','id-aqr (UAMI) · Reader @ mg-contoso'],['Auth','Easy Auth · Entra ID · app roles AQR.Reader / AQR.Admin · secretless (MI FIC)'],['API','/api/v1 · OpenAPI at /openapi/v1.json']].map(([k,v])=>`<div>${k}</div><div>${v}</div>`).join('');
+  $('a-config').innerHTML=[['Management groups','mg-contoso (root)'],['Region scope','all regions returned by ARG · write-on-change'],['Sync interval','SubQuota 1h · Groups 4h · Zones/SKUs daily'],['Data store','Log Analytics · law-aqr-prod (analytics retention 365 d)'],['Network Security Perimeter','nsp-aqr · <span class="badge ok">Enforced</span> · inbound: AQR subscription (MI)'],['Identity','id-aqr (UAMI) · Reader @ mg-contoso'],['Auth','Easy Auth · Entra ID · app roles AQR.Reader / AQR.Admin · secretless (MI FIC)'],['API','/api/v1 · OpenAPI at /openapi/v1.json']].map(([k,v])=>`<div>${k}</div><div>${v}</div>`).join('');
 }
 
 // ---------------------------------------------------------------- wiring
