@@ -1,6 +1,6 @@
 # Azure Quota Reporting (AQR) — Architecture Design
 
-> **Status:** Draft v0.2 · 2026-10-07 · decisions D1–D8 applied (§13)
+> **Status:** Draft v0.2 · 2026-10-07 · decisions D1–D9 applied (§13)
 > **Scope of v1:** Virtual Machine (Compute) quota — subscription quota **and** Azure Quota Groups,
 > with zonal SKU access reported separately from regional vCPU quota.
 > **Mockup:** [`docs/mockups/aqr-mockup.html`](mockups/aqr-mockup.html) (open in a browser — filters work on synthetic data)
@@ -205,7 +205,7 @@ Rejected:
 
 | `AQR_SQL_NETWORK` | What gets deployed | Status |
 |---|---|---|
-| **`nsp`** (default — your stated requirement) | SQL logical server and storage account associated with one Network Security Perimeter profile. Inbound rule: **subscription-based**, allowing managed identities from the AQR subscription. No IP rules. Start in **Transition** mode, then switch to **Enforced** (`AQR_NSP_MODE`). In Enforced mode a denied login fails with error 42118. | **SQL Database NSP is public preview** (Supplemental Terms of Use for Azure Previews apply; Azure public cloud only). Storage NSP is GA. [Learn](https://learn.microsoft.com/azure/azure-sql/database/network-security-perimeter) |
+| **`nsp`** (default — decision D9) | SQL logical server and storage account associated with one Network Security Perimeter profile. Inbound rule: **subscription-based**, allowing managed identities from the AQR subscription. No IP rules. Start in **Transition** mode, then switch to **Enforced** (`AQR_NSP_MODE`). In Enforced mode a denied login fails with error 42118. | **SQL Database NSP is public preview** (Supplemental Terms of Use for Azure Previews apply; Azure public cloud only). Storage NSP is GA. [Learn](https://learn.microsoft.com/azure/azure-sql/database/network-security-perimeter) |
 | `privateEndpoint` | VNet, App Service regional VNet integration, private endpoints for SQL and storage, `privatelink.database.windows.net` / `privatelink.blob.core.windows.net` private DNS zones, public network access disabled | GA |
 
 Switching between the two is an azd parameter. The app code doesn't change. If preview terms aren't
@@ -535,11 +535,11 @@ deployer lacks Graph permissions, a hook script does it instead.
 | D6 | Who sees what | **Admin-maintained mapping (option B below).** Report visibility is deliberately separate from Azure RBAC (§4.3) |
 | D7 | Data store | **Azure SQL Database with system-versioned temporal tables** (§5). Log Analytics holds app telemetry only |
 | D8 | Services | **Azure-native services only.** No third-party or open-source engines |
+| D9 | SQL network | **Network Security Perimeter** for production (`AQR_SQL_NETWORK=nsp`), accepting SQL NSP public-preview terms. `privateEndpoint` stays available as the GA fallback (§5.2) |
 
 **Open**
 
-1. **SQL network mode for production:** `nsp` (SQL NSP is public preview) or `privateEndpoint`
-   (GA) until SQL NSP is GA (§5.2)? The design defaults to `nsp` per the original requirement.
+None at this time.
 
 **Resolved — row-level scoping options considered (D6 chose B)**
 
