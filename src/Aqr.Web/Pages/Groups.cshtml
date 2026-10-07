@@ -76,7 +76,7 @@
                 @foreach (var m in d.Members)
                 {
                     <tr><td><b>@m.Name</b><div class="note">@m.SubscriptionId</div></td><td class="num">@U.N(m.Allocated)</td><td class="num">@U.N(m.Usage)</td>
-                        <td>@if (m.Blocked > 0) { <a class="badge crit" href="/Explorer?sub=@m.SubscriptionId&zstat=NoZones&zstat=RegionBlocked">@m.Blocked</a> } else { <span class="badge ok">0</span> }</td></tr>
+                        <td>@if (m.Blocked > 0) { <a class="badge crit" href="/Explorer?sub=@m.SubscriptionId&zstat=NoZones&zstat=RegionBlocked&zstat=NotOffered">@m.Blocked</a> } else { <span class="badge ok">0</span> }</td></tr>
                 }
                 </tbody>
             </table>

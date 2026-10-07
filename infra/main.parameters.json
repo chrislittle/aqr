@@ -6,6 +6,7 @@
     "location": { "value": "${AZURE_LOCATION}" },
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "managementGroupIds": { "value": "${AQR_MANAGEMENT_GROUP_IDS=}" },
+    "subscriptionIds": { "value": "${AQR_SUBSCRIPTION_IDS=}" },
     "regions": { "value": "${AQR_REGIONS=}" },
     "sqlNetwork": { "value": "${AQR_SQL_NETWORK=nsp}" },
     "nspMode": { "value": "${AQR_NSP_MODE=Learning}" },

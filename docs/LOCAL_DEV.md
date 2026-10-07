@@ -65,9 +65,10 @@ Each test creates and drops its own database.
 
 ```powershell
 dotnet user-secrets set "Aqr:UseMock" "false" --project src/Aqr.Web
-dotnet user-secrets set "Aqr:ManagementGroupIds" "<mg-id>" --project src/Aqr.Web
+dotnet user-secrets set "Aqr:ManagementGroupIds" "<mg-id>" --project src/Aqr.Web    # and/or
+dotnet user-secrets set "Aqr:SubscriptionIds" "<sub-id>" --project src/Aqr.Web     # explicit subscriptions
 dotnet run --project src/Aqr.Web
 ```
 
-The sync reads with your own Azure credentials (`DefaultAzureCredential`). Every call is read-only: Resource Graph,
+The sync reads with your own Azure credentials (Azure CLI, then Azure PowerShell). It never runs Resource Graph unscoped: with no management group and no subscription list configured, it refuses to start. That matters when your login can see delegated (Lighthouse) subscriptions. Every call is read-only: Resource Graph,
 `Microsoft.Quota`, Resource SKUs and Subscriptions. You need Reader on the management group.

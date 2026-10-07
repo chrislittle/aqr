@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore Aqr.slnx
+      - run: dotnet build Aqr.slnx --no-restore -c Release -warnaserror
+      # Unit, SQL-translation, web/auth and live-shape tests. SQL integration tests skip here (no AQR_TEST_SQL).
+      - run: dotnet test Aqr.slnx --no-build -c Release --logger "trx;LogFileName=results.trx"
+      - name: Check for pending EF Core model changes
+        run: |
+          dotnet tool install --global dotnet-ef
+          dotnet ef migrations has-pending-model-changes --project src/Aqr.Core --startup-project src/Aqr.Core
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"
+
+  infra:
+    name: Bicep build and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # No Azure sign-in: build and lint are offline (br/public modules restore from MCR).
+      - run: az bicep install
+      - run: az bicep build --file infra/main.bicep --stdout > /dev/null
+      - run: az bicep lint --file infra/main.bicep
+
+  # The Azure SQL Database container is in Private Preview: this job runs only when the registry secrets exist.
+  secrets-check:
+    name: Detect container registry secrets
+    runs-on: ubuntu-latest
+    outputs:
+      has-registry: ${{ steps.check.outputs.has-registry }}
+    steps:
+      - id: check
+        env:
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+        run: echo "has-registry=$([ -n "$ACR_USERNAME" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  sql-integration:
+    name: SQL integration (Azure SQL Database container)
+    needs: secrets-check
+    if: needs.secrets-check.outputs.has-registry == 'true'
+    runs-on: ubuntu-latest
+    services:
+      # The Azure SQL Database engine (EngineEdition 5), not the SQL Server image.
+      # Pattern from Microsoft's azuresql-db-ci skill (.agents/skills/azuresql-db-ci).
+      sqldb:
+        image: sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io/azure-sql/db-dev:latest
+        credentials:
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -b -l 2 -Q \"SELECT 1\""
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify engine identity
+        env:
+          MSSQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD }}
+        run: |
+          CID=$(docker ps --filter "ancestor=sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io/azure-sql/db-dev:latest" --format '{{.ID}}')
+          ED=$(docker exec "$CID" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -b -h -1 \
+            -Q "SET NOCOUNT ON; SELECT CAST(SERVERPROPERTY('EngineEdition') AS int);" | tr -d '[:space:]')
+          [ "$ED" = "5" ] || { echo "Expected EngineEdition 5 (Azure SQL Database), got '$ED'"; exit 1; }
+      # Each SQL test creates and drops its own database from master, so no appdb provisioning step is needed.
+      - name: SQL integration tests
+        env:
+          AQR_TEST_SQL: "Server=localhost,1433;User Id=sa;Password=${{ secrets.MSSQL_SA_PASSWORD }};Encrypt=True;TrustServerCertificate=True;"
+        run: dotnet test Aqr.slnx -c Release --filter "FullyQualifiedName~SqlIntegrationTests"

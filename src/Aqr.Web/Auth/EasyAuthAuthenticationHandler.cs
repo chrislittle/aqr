@@ -19,9 +19,12 @@ public sealed class EasyAuthAuthenticationHandler(IOptionsMonitor<Authentication
             ? AuthenticateResult.Success(new AuthenticationTicket(Context.User, SchemeName))
             : AuthenticateResult.NoResult());
 
+    // /api/docs is the browser-facing Swagger UI, so it gets the sign-in redirect like any page.
+    private bool IsApiCall => Request.Path.StartsWithSegments("/api") && !Request.Path.StartsWithSegments("/api/docs");
+
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
     {
-        if (Request.Path.StartsWithSegments("/api"))
+        if (IsApiCall)
         {
             Response.StatusCode = StatusCodes.Status401Unauthorized;
             return Task.CompletedTask;
@@ -33,7 +36,7 @@ public sealed class EasyAuthAuthenticationHandler(IOptionsMonitor<Authentication
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties)
     {
-        if (Request.Path.StartsWithSegments("/api"))
+        if (IsApiCall)
         {
             Response.StatusCode = StatusCodes.Status403Forbidden;
             return Task.CompletedTask;

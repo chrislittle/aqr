@@ -29,15 +29,22 @@ public sealed class ArmQuotaSource(
 
     public SourceStats Stats { get; } = new();
 
-    public async Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, CancellationToken ct)
+    public async Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, IReadOnlyList<string> subscriptionIds, CancellationToken ct)
     {
+        // Resource Graph without a scope spans every subscription the identity can read (including delegated ones),
+        // so AQR refuses to run unscoped.
+        if (managementGroupIds.Count == 0 && subscriptionIds.Count == 0)
+            throw new InvalidOperationException("No scope configured: set Aqr:ManagementGroupIds and/or Aqr:SubscriptionIds.");
         const string query = """
             resourcecontainers
             | where type =~ 'microsoft.resources/subscriptions'
             | project subscriptionId, name, state = tostring(properties.state), chain = properties.managementGroupAncestorsChain
             """;
-        var rows = await QueryResourceGraphAsync(query, managementGroupIds, null, "inventory", ct);
-        return rows.Select(r =>
+        var rows = new List<JsonNode>();
+        if (managementGroupIds.Count > 0) rows.AddRange(await QueryResourceGraphAsync(query, managementGroupIds, null, "inventory", ct));
+        foreach (var batch in subscriptionIds.Chunk(ArgSubscriptionBatch))
+            rows.AddRange(await QueryResourceGraphAsync(query, null, batch, "inventory", ct));
+        return rows.DistinctBy(r => Str(r, "subscriptionId"), StringComparer.OrdinalIgnoreCase).Select(r =>
         {
             // managementGroupAncestorsChain is ordered from the immediate parent up to the root.
             var chain = r["chain"] is JsonArray a
@@ -47,10 +54,11 @@ public sealed class ArmQuotaSource(
         }).ToList();
     }
 
-    public async Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, CancellationToken ct)
+    public async Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, bool includeEmpty, CancellationToken ct)
     {
         // Compute is the only provider with near-real-time quota data in QuotaResources (Learn: quotas monitoring).
-        const string query = """
+        // Live (2026-10-07): ~10k rows per subscription across 51 regions; ~25 % are limit 0 / usage 0.
+        var query = """
             QuotaResources
             | where type =~ 'microsoft.compute/locations/usages'
             | where isnotempty(properties)
@@ -58,7 +66,7 @@ public sealed class ArmQuotaSource(
             | extend qname = tostring(q.name.value)
             | where qname =~ 'cores' or qname endswith 'Family'
             | project subscriptionId, location, qname, localized = tostring(q.name.localizedValue), usage = tolong(q.currentValue), qlimit = tolong(q['limit'])
-            """;
+            """ + (includeEmpty ? "" : "\n| where qname =~ 'cores' or qlimit > 0 or usage > 0");
         var result = new List<QuotaUsage>();
         foreach (var batch in subscriptionIds.Chunk(ArgSubscriptionBatch))
         {
@@ -78,7 +86,7 @@ public sealed class ArmQuotaSource(
             .Select(i => new QuotaUsage(subscriptionId, region,
                 i["name"]?["value"]?.GetValue<string>() ?? "", i["name"]?["localizedValue"]?.GetValue<string>() ?? "",
                 Long(i, "currentValue"), Long(i, "limit")))
-            .Where(u => u.Name.Equals("cores", StringComparison.OrdinalIgnoreCase) || u.Name.EndsWith("Family", StringComparison.OrdinalIgnoreCase))
+            .Where(u => u.Name.Equals("cores", StringComparison.OrdinalIgnoreCase) || Model.Keys.Family(u.Name).EndsWith("family", StringComparison.Ordinal))
             .ToList();
     }
 

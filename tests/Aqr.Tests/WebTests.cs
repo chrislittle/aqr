@@ -71,6 +71,7 @@ public sealed class WebTests(DevAppFactory factory) : IClassFixture<DevAppFactor
         await factory.WaitForDataAsync();
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
         Assert.Contains("QuotaSubscriptions", await client.GetStringAsync("/openapi/v1.json"));
+        Assert.Contains("swagger-ui", await client.GetStringAsync("/api/docs/index.html"));
     }
 }
 
@@ -104,6 +105,19 @@ public sealed class AuthTests(EasyAuthAppFactory factory) : IClassFixture<EasyAu
         Assert.Equal(HttpStatusCode.Redirect, page.StatusCode);
         Assert.StartsWith("/.auth/login/aad", page.Headers.Location!.OriginalString);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Client().GetAsync("/api/v1/quota/subscriptions")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Swagger_ui_requires_sign_in_and_a_role()
+    {
+        var anon = await Client().GetAsync("/api/docs/index.html");
+        Assert.Equal(HttpStatusCode.Redirect, anon.StatusCode);
+        var noRole = new HttpRequestMessage(HttpMethod.Get, "/api/docs/index.html");
+        noRole.Headers.Add("X-MS-CLIENT-PRINCIPAL", EasyAuthAppFactory.Principal());
+        Assert.NotEqual(HttpStatusCode.OK, (await Client().SendAsync(noRole)).StatusCode);
+        var reader = new HttpRequestMessage(HttpMethod.Get, "/api/docs/index.html");
+        reader.Headers.Add("X-MS-CLIENT-PRINCIPAL", EasyAuthAppFactory.Principal("AQR.Reader"));
+        Assert.Equal(HttpStatusCode.OK, (await Client().SendAsync(reader)).StatusCode);
     }
 
     [Fact]

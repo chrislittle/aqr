@@ -162,3 +162,12 @@ form.inline{display:inline}
 .heat a{text-decoration:none}
 #filters + div .card td .fam small{max-width:180px;overflow:hidden;text-overflow:ellipsis}
 
+
+/* Narrow screens: tables scroll inside their card instead of overflowing the page. */
+.card{min-width:0}
+.card > table, .scroll, .cb > table{display:block;overflow-x:auto}
+.card > table thead, .card > table tbody, .scroll > table, .cb > table thead, .cb > table tbody{width:100%}
+.explorer > div{min-width:0}
+@media(max-width:1100px){.fpanel .checks{max-height:160px;overflow:auto}}
+@media(max-width:1100px){.fpanel{max-height:50vh;overflow:auto}}
+

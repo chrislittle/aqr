@@ -14,6 +14,9 @@ param principalId string
 @description('Optional. Comma-separated management group IDs that AQR reports on.')
 param managementGroupIds string = ''
 
+@description('Optional. Comma-separated subscription IDs to report on, in addition to (or instead of) management groups.')
+param subscriptionIds string = ''
+
 @description('Optional. Comma-separated Azure regions to sync. Empty means all regions returned by the APIs.')
 param regions string = ''
 
@@ -458,6 +461,7 @@ module web 'br/public:avm/res/web/site:0.24.0' = {
           Auth__EasyAuthEnabled: 'true'
           Aqr__UseMock: 'false'
           Aqr__ManagementGroupIds: managementGroupIds
+          Aqr__SubscriptionIds: subscriptionIds
           Aqr__Regions: regions
           Aqr__Sync__QuotaInterval: '01:00:00'
           Aqr__Sync__GroupInterval: '04:00:00'

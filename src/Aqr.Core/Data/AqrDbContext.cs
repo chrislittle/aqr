@@ -85,6 +85,7 @@ public sealed class AqrDbContext(DbContextOptions<AqrDbContext> options) : DbCon
             e.Property(x => x.SubscriptionId).HasMaxLength(Id);
             e.Property(x => x.Region).HasMaxLength(Id);
             e.Property(x => x.QuotaName).HasMaxLength(Name);
+            e.Property(x => x.RawName).HasMaxLength(Name);
             e.Property(x => x.Kind).HasMaxLength(16);
             e.Property(x => x.FamilyId).HasMaxLength(Name);
             e.Property(x => x.LocalizedName).HasMaxLength(Name * 2);

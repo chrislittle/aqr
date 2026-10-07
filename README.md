@@ -19,6 +19,22 @@ Vocabulary for every filter (CPU manufacturer Intel / AMD / Microsoft Cobalt / A
 generation, features, lifecycle) comes from Microsoft's own taxonomy. [`catalog/vm-families.json`](catalog/vm-families.json)
 cites a Microsoft Learn page for every family it describes.
 
+## Screenshots
+
+Real app, synthetic data (`Aqr:UseMock=true`).
+
+| Overview | Quota explorer |
+|---|---|
+| ![Overview](docs/images/app-overview.png) | ![Explorer](docs/images/app-explorer.png) |
+
+| Quota groups | Zones & SKU access |
+|---|---|
+| ![Quota groups](docs/images/app-groups.png) | ![Zones](docs/images/app-zones.png) |
+
+| VM families | API docs (`/api/docs`) |
+|---|---|
+| ![Families](docs/images/app-families.png) | ![API docs](docs/images/app-apidocs.png) |
+
 ## Quickstart (local, synthetic data)
 
 ```powershell
@@ -35,7 +51,8 @@ See [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md) for the Azure SQL Database container 
 az login; az account set --subscription <id>; az account show     # confirm the target subscription first
 azd env new aqr-prod
 azd env set AZURE_SUBSCRIPTION_ID <id>
-azd env set AQR_MANAGEMENT_GROUP_IDS <mg-id>[,<mg-id>]
+azd env set AQR_MANAGEMENT_GROUP_IDS <mg-id>[,<mg-id>]                   # and/or:
+azd env set AQR_SUBSCRIPTION_IDS <sub-id>[,<sub-id>]                  # explicit subscriptions (no MG needed)
 azd env set AQR_ADMIN_GROUP_ID <entra-group-object-id>                # AQR.Admin
 azd env set AQR_READER_GROUP_ID <entra-group-object-id>               # AQR.Reader (optional)
 azd up
@@ -63,13 +80,13 @@ from Azure RBAC. Readers with no grant see nothing, and every grant change is au
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design: data sources, regional vs zonal model, SQL temporal data model, sync, decisions D1–D9 |
 | [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md) | Local development with the Azure SQL Database container |
 | [infra/README.md](infra/README.md) | AVM-based infrastructure, network modes, permissions |
-| [docs/mockups/aqr-mockup.html](docs/mockups/aqr-mockup.html) | Original clickable UI mockup |
+| [docs/mockups/aqr-mockup.html](docs/mockups/aqr-mockup.html) | Original clickable UI mockup (superseded by the app) |
 
 ## Repository layout
 
 ```
 src/Aqr.Core      sync pipeline, ARM data sources, EF Core model + migrations (temporal), reports, visibility
-src/Aqr.Web       Razor Pages UI, /api/v1 (OpenAPI at /openapi/v1.json), Easy Auth integration, sync worker host
+src/Aqr.Web       Razor Pages UI, /api/v1 (OpenAPI at /openapi/v1.json, Swagger UI at /api/docs), Easy Auth, sync worker host
 tests/Aqr.Tests   xUnit tests
 catalog/          VM family catalog (cited to Microsoft Learn)
 infra/            Bicep (AVM) for azd

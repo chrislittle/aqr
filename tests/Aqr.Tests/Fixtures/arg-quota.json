@@ -1,0 +1,79 @@
+{
+  "count": 9,
+  "data": [
+    {
+      "localized": "Total Regional vCPUs",
+      "location": "eastus2",
+      "qlimit": 100,
+      "qname": "cores",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard Dadsv7 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 100,
+      "qname": "StandardDadsv7Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard DSv3 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 100,
+      "qname": "standardDSv3Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard DSv5 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 100,
+      "qname": "standardDSv5Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard NCASv3_T4 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 0,
+      "qname": "Standard NCASv3_T4 Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard NDAMSv4_A100Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 0,
+      "qname": "standard NDAMSv4_A100Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard DCadsv6 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 0,
+      "qname": "standardDCadsv6Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard DCasv6 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 0,
+      "qname": "standardDCasv6Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    },
+    {
+      "localized": "Standard EIADSv5 Family vCPUs",
+      "location": "eastus2",
+      "qlimit": 0,
+      "qname": "standardEIADSv5Family",
+      "subscriptionId": "00000000-0000-0000-0000-000000000001",
+      "usage": 0
+    }
+  ],
+  "totalRecords": 9,
+  "resultTruncated": "false"
+}

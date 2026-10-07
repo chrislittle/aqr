@@ -80,6 +80,7 @@ public static class U
         if (status is null) return new HtmlString("<span class=\"zstat\" title=\"No SKU data for this subscription/region yet (zones sync runs daily)\">not synced</span>");
         if (status == ZoneStatuses.Regional) return new HtmlString("<span class=\"regional\" title=\"Region has no availability zones, or the SKUs aren't offered zonally — regional (non-zonal) deployment only\">regional only</span>");
         if (status == ZoneStatuses.RegionBlocked) return new HtmlString("<span class=\"blocked\" title=\"restrictions[type=Location] for this subscription\">region blocked</span>");
+        if (status == ZoneStatuses.NotOffered) return new HtmlString("<span class=\"blocked\" style=\"background:#64748b\" title=\"Quota exists, but the Resource SKUs API offers no SKU of this family to this subscription in this region\">no SKUs offered</span>");
 
         var offered = Split(physical ? offeredP : offeredL);
         var open = Split(physical ? openP : openL).ToHashSet();

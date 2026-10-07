@@ -29,6 +29,14 @@ else {
     Write-Warning 'AQR_MANAGEMENT_GROUP_IDS is empty; no management-group Reader assignment commands to print.'
 }
 
+if (-not [string]::IsNullOrWhiteSpace($env:AQR_SUBSCRIPTION_IDS)) {
+    foreach ($sub in ($env:AQR_SUBSCRIPTION_IDS.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })) {
+        $cmd = "az role assignment create --assignee-object-id $env:UAMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role Reader --scope /subscriptions/$sub"
+        if ($env:AQR_ASSIGN_MG_RBAC -eq 'true') { Write-Host "Executing: $cmd"; az role assignment create --assignee-object-id $env:UAMI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role Reader --scope "/subscriptions/$sub" | Out-Host }
+        else { Write-Host $cmd }
+    }
+}
+
 Write-Host 'Ensure Microsoft.Quota and Microsoft.Compute resource providers are registered in each member subscription.'
 if (-not [string]::IsNullOrWhiteSpace($env:WEB_APP_URL)) {
     Write-Host "WEB_APP_URL: $env:WEB_APP_URL"

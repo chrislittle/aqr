@@ -112,10 +112,10 @@ public sealed class MockQuotaSource(TimeProvider time) : IQuotaSource
 
     private bool Present(Sub s, string region, string family) => Hash(s.Id, region, family, "present") % 100 >= 15;
 
-    public Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, CancellationToken ct) =>
+    public Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, IReadOnlyList<string> subscriptionIds, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SubscriptionInfo>>(Subs.Select(s => new SubscriptionInfo(s.Id, s.Name, "Enabled", s.MgChain)).ToList());
 
-    public Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, CancellationToken ct)
+    public Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, bool includeEmpty, CancellationToken ct)
     {
         var ids = subscriptionIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var rows = new List<QuotaUsage>();

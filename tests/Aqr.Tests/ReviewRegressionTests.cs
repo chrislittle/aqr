@@ -10,8 +10,8 @@ public sealed class ReviewRegressionTests(DevAppFactory factory) : IClassFixture
     private sealed class FailingGroupSource(IQuotaSource inner, string failingGroup) : IQuotaSource
     {
         public SourceStats Stats => inner.Stats;
-        public Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> m, CancellationToken ct) => inner.GetSubscriptionsAsync(m, ct);
-        public Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> s, CancellationToken ct) => inner.GetQuotaUsagesAsync(s, ct);
+        public Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> m, IReadOnlyList<string> s, CancellationToken ct) => inner.GetSubscriptionsAsync(m, s, ct);
+        public Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> s, bool e, CancellationToken ct) => inner.GetQuotaUsagesAsync(s, e, ct);
         public Task<IReadOnlyList<QuotaUsage>> GetComputeUsagesAsync(string s, string r, CancellationToken ct) => inner.GetComputeUsagesAsync(s, r, ct);
         public Task<IReadOnlyList<LocationInfo>> GetLocationsAsync(string s, CancellationToken ct) => inner.GetLocationsAsync(s, ct);
         public Task<IReadOnlyList<SkuInfo>> GetVmSkusAsync(string s, string r, CancellationToken ct) => inner.GetVmSkusAsync(s, r, ct);

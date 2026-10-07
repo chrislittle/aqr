@@ -36,6 +36,35 @@ public sealed class SyncPipelineTests
     }
 
     [Fact]
+    public async Task Families_with_quota_but_no_offered_skus_are_marked_not_offered()
+    {
+        var db = TestHost.InMemoryFactory();
+        var time = new FixedTime(T0);
+        var src = new NoSkusFor(new Aqr.Core.Sources.MockQuotaSource(time), "standarddsv5family");
+        await TestHost.Sync(db, time, src).RunAsync(new SyncRequest("Test", Force: true), default);
+        await using var ctx = await db.CreateDbContextAsync();
+        var dsv5 = await ctx.FamilyZoneAccess.Where(z => z.FamilyId == "standarddsv5family").ToListAsync();
+        Assert.NotEmpty(dsv5);
+        Assert.All(dsv5, z => Assert.Equal(ZoneStatuses.NotOffered, z.ZoneStatus));
+        Assert.Contains(await ctx.FamilyZoneAccess.Select(z => z.ZoneStatus).Distinct().ToListAsync(), s => s != ZoneStatuses.NotOffered);
+    }
+
+    private sealed class NoSkusFor(Aqr.Core.Sources.IQuotaSource inner, string family) : Aqr.Core.Sources.IQuotaSource
+    {
+        public Aqr.Core.Sources.SourceStats Stats => inner.Stats;
+        public Task<IReadOnlyList<Aqr.Core.Sources.SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> m, IReadOnlyList<string> s, CancellationToken ct) => inner.GetSubscriptionsAsync(m, s, ct);
+        public Task<IReadOnlyList<Aqr.Core.Sources.QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> s, bool e, CancellationToken ct) => inner.GetQuotaUsagesAsync(s, e, ct);
+        public Task<IReadOnlyList<Aqr.Core.Sources.QuotaUsage>> GetComputeUsagesAsync(string s, string r, CancellationToken ct) => inner.GetComputeUsagesAsync(s, r, ct);
+        public Task<IReadOnlyList<Aqr.Core.Sources.LocationInfo>> GetLocationsAsync(string s, CancellationToken ct) => inner.GetLocationsAsync(s, ct);
+        public async Task<IReadOnlyList<Aqr.Core.Sources.SkuInfo>> GetVmSkusAsync(string s, string r, CancellationToken ct) =>
+            (await inner.GetVmSkusAsync(s, r, ct)).Where(x => Keys.Family(x.Family) != family).ToList();
+        public Task<IReadOnlyList<Aqr.Core.Sources.QuotaGroupInfo>> GetQuotaGroupsAsync(string m, CancellationToken ct) => inner.GetQuotaGroupsAsync(m, ct);
+        public Task<IReadOnlyList<string>> GetQuotaGroupSubscriptionsAsync(string m, string g, CancellationToken ct) => inner.GetQuotaGroupSubscriptionsAsync(m, g, ct);
+        public Task<IReadOnlyList<Aqr.Core.Sources.GroupQuotaLimitInfo>> GetGroupQuotaLimitsAsync(string m, string g, string r, CancellationToken ct) => inner.GetGroupQuotaLimitsAsync(m, g, r, ct);
+        public Task<IReadOnlyList<Aqr.Core.Sources.GroupQuotaUsageInfo>> GetGroupQuotaUsagesAsync(string m, string g, string r, CancellationToken ct) => inner.GetGroupQuotaUsagesAsync(m, g, r, ct);
+    }
+
+    [Fact]
     public async Task Rerun_with_unchanged_data_writes_nothing()
     {
         var db = TestHost.InMemoryFactory();

@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <None Include="..\..\catalog\vm-families.json" Link="catalog\vm-families.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

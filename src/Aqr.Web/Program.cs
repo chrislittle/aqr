@@ -10,6 +10,8 @@ using Aqr.Web.Auth;
 using Azure.Core;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,8 +40,15 @@ else
     }));
 }
 
-// ---- Azure identity: the user-assigned managed identity (AZURE_CLIENT_ID) in Azure; az login locally.
-builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
+// ---- Azure identity, chosen explicitly (DefaultAzureCredential's probing chain hung on a dev box in live testing):
+//      in Azure, the user-assigned managed identity (AZURE_CLIENT_ID is set by infra); locally, az login / Azure PowerShell.
+builder.Services.AddSingleton<TokenCredential>(_ =>
+{
+    var clientId = config["AZURE_CLIENT_ID"];
+    return !string.IsNullOrWhiteSpace(clientId) && !builder.Environment.IsDevelopment()
+        ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(clientId))
+        : new ChainedTokenCredential(new AzureCliCredential(), new AzurePowerShellCredential());
+});
 builder.Services.AddSingleton(TimeProvider.System);
 
 // ---- Data source: Azure Resource Manager APIs, or deterministic synthetic data.
@@ -106,7 +115,12 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AllowAnonymousToPage("/NoAccess");
     o.Conventions.AllowAnonymousToPage("/Error");
 });
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
+{
+    doc.Info.Title = "Azure Quota Reporting (AQR) API";
+    doc.Info.Description = "VM quota, Quota Groups and zonal SKU access with point-in-time history. Every call applies the caller's admin-mapped report visibility. Authenticate with an Entra ID bearer token for the AQR app (App Service Easy Auth); callers need the AQR.Reader app role.";
+    return Task.CompletedTask;
+}));
 // Telemetry only when App Insights is configured (Azure); local runs and tests have no connection string.
 if (!string.IsNullOrWhiteSpace(config["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
     builder.Services.AddApplicationInsightsTelemetry();
@@ -131,6 +145,30 @@ app.MapGet("/health/ready", (DatabaseState s) => s.Ready
         : Results.Json(new { status = "starting", error = s.LastError }, statusCode: 503))
     .AllowAnonymous();
 app.MapOpenApi().RequireAuthorization(Policies.Reader);
+
+// Swagger UI (Swashbuckle, the Learn-documented community UI for the built-in OpenAPI document) at /api/docs.
+// It is middleware rather than an endpoint, so the authorization fallback policy doesn't cover it: enforce the
+// Reader policy explicitly before it runs.
+app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/docs"), docs =>
+{
+    docs.Use(async (ctx, next) =>
+    {
+        var authz = ctx.RequestServices.GetRequiredService<IAuthorizationService>();
+        if (!(await authz.AuthorizeAsync(ctx.User, Policies.Reader)).Succeeded)
+        {
+            if (ctx.User.Identity?.IsAuthenticated == true) await ctx.ForbidAsync();
+            else await ctx.ChallengeAsync();
+            return;
+        }
+        await next();
+    });
+    docs.UseSwaggerUI(o =>
+    {
+        o.RoutePrefix = "api/docs";
+        o.SwaggerEndpoint("/openapi/v1.json", "AQR API v1");
+        o.DocumentTitle = "AQR API";
+    });
+});
 app.MapAqrApi();
 app.MapRazorPages();
 

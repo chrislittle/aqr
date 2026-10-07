@@ -49,10 +49,11 @@ public interface IQuotaSource
 {
     SourceStats Stats { get; }
 
-    Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, CancellationToken ct);
+    /// <summary>Subscriptions under the management groups and/or the explicit subscription list. Never tenant-wide.</summary>
+    Task<IReadOnlyList<SubscriptionInfo>> GetSubscriptionsAsync(IReadOnlyList<string> managementGroupIds, IReadOnlyList<string> subscriptionIds, CancellationToken ct);
 
     /// <summary>Compute quota usages (cores + *Family) for the given subscriptions, from Resource Graph QuotaResources.</summary>
-    Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, CancellationToken ct);
+    Task<IReadOnlyList<QuotaUsage>> GetQuotaUsagesAsync(IReadOnlyList<string> subscriptionIds, bool includeEmpty, CancellationToken ct);
 
     /// <summary>Fallback (S2): Compute Usages API for one subscription and region.</summary>
     Task<IReadOnlyList<QuotaUsage>> GetComputeUsagesAsync(string subscriptionId, string region, CancellationToken ct);

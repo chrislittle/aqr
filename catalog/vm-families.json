@@ -829,6 +829,373 @@
       ],
       "lifecycle": "Current",
       "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/high-performance-compute/hx-series"
+    },
+    {
+      "match": [
+        "dsv7",
+        "ddsv7",
+        "dlsv7",
+        "dldsv7"
+      ],
+      "series": "Dsv7 family",
+      "category": "GeneralPurpose",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/general-purpose/d-family"
+    },
+    {
+      "match": [
+        "dasv7",
+        "dadsv7",
+        "dalsv7",
+        "daldsv7"
+      ],
+      "series": "Dasv7 family",
+      "category": "GeneralPurpose",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/general-purpose/d-family"
+    },
+    {
+      "match": [
+        "dcsv2"
+      ],
+      "series": "DCsv2",
+      "category": "GeneralPurpose",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [
+        "confidential"
+      ],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/general-purpose/dc-family"
+    },
+    {
+      "match": [
+        "esv7",
+        "edsv7"
+      ],
+      "series": "Esv7 / Edsv7",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/e-family"
+    },
+    {
+      "match": [
+        "easv7",
+        "eadsv7"
+      ],
+      "series": "Easv7 / Eadsv7",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/e-family"
+    },
+    {
+      "match": [
+        "eiasv5"
+      ],
+      "series": "Easv5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/easv5-series"
+    },
+    {
+      "match": [
+        "eiasv4"
+      ],
+      "series": "Easv4 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/easv4-series"
+    },
+    {
+      "match": [
+        "eiv5"
+      ],
+      "series": "Ev5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/ev5-series"
+    },
+    {
+      "match": [
+        "eisv5"
+      ],
+      "series": "Esv5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/esv5-series"
+    },
+    {
+      "match": [
+        "eidv5"
+      ],
+      "series": "Edv5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/edv5-series"
+    },
+    {
+      "match": [
+        "eidsv5"
+      ],
+      "series": "Edsv5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/edsv5-series"
+    },
+    {
+      "match": [
+        "eibsv5",
+        "eibdsv5"
+      ],
+      "series": "Ebsv5 / Ebdsv5 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/ebdsv5-ebsv5-series"
+    },
+    {
+      "match": [
+        "eiv3",
+        "eisv3"
+      ],
+      "series": "Ev3 / Esv3 isolated",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Capacity-restricted",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/ev3-esv3-series"
+    },
+    {
+      "match": [
+        "mbsmediummemoryv3",
+        "mbdsmediummemoryv3"
+      ],
+      "series": "Mbsv3 / Mbdsv3",
+      "category": "MemoryOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/memory-optimized/m-family"
+    },
+    {
+      "match": [
+        "lsv4"
+      ],
+      "series": "Lsv4",
+      "category": "StorageOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/storage-optimized/lsv4-series"
+    },
+    {
+      "match": [
+        "lasv4"
+      ],
+      "series": "Lasv4",
+      "category": "StorageOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/storage-optimized/lasv4-series"
+    },
+    {
+      "match": [
+        "laosv4"
+      ],
+      "series": "Laosv4",
+      "category": "StorageOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/storage-optimized/laosv4-series"
+    },
+    {
+      "match": [
+        "lasv5"
+      ],
+      "series": "Lasv5",
+      "category": "StorageOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/storage-optimized/l-family"
+    },
+    {
+      "match": [
+        "laosv5"
+      ],
+      "series": "Laosv5",
+      "category": "StorageOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/storage-optimized/l-family"
+    },
+    {
+      "match": [
+        "fasv7",
+        "fadsv7"
+      ],
+      "series": "Fasv7 / Fadsv7",
+      "category": "ComputeOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/compute-optimized/f-family"
+    },
+    {
+      "match": [
+        "famsv7",
+        "famdsv7"
+      ],
+      "series": "Famsv7 / Famdsv7",
+      "category": "ComputeOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/compute-optimized/f-family"
+    },
+    {
+      "match": [
+        "falsv7",
+        "faldsv7"
+      ],
+      "series": "Falsv7 / Faldsv7",
+      "category": "ComputeOptimized",
+      "cpuManufacturer": "AMD",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/compute-optimized/f-family"
+    },
+    {
+      "match": [
+        "fxmsv2"
+      ],
+      "series": "FXmsv2",
+      "category": "ComputeOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/compute-optimized/fxmsv2-series"
+    },
+    {
+      "match": [
+        "fxmdsv2"
+      ],
+      "series": "FXmdsv2",
+      "category": "ComputeOptimized",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/compute-optimized/fxmdsv2-series"
+    },
+    {
+      "match": [
+        "nps"
+      ],
+      "series": "NP",
+      "category": "FpgaAccelerated",
+      "cpuManufacturer": "Intel",
+      "accelerator": {
+        "type": "FPGA",
+        "vendor": "Xilinx",
+        "model": "Alveo U250"
+      },
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/fpga-accelerated/np-family"
+    },
+    {
+      "match": [
+        "nc",
+        "ncpromo"
+      ],
+      "series": "NC / NC Promo",
+      "category": "GpuAccelerated",
+      "cpuManufacturer": "Intel",
+      "accelerator": {
+        "type": "GPU",
+        "vendor": "Nvidia",
+        "model": "Tesla K80"
+      },
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/nc-series"
+    },
+    {
+      "match": [
+        "nv",
+        "nvpromo"
+      ],
+      "series": "NV / NV Promo",
+      "category": "GpuAccelerated",
+      "cpuManufacturer": "Intel",
+      "accelerator": {
+        "type": "GPU",
+        "vendor": "Nvidia",
+        "model": "Tesla M60"
+      },
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nv-series"
+    },
+    {
+      "match": [
+        "h",
+        "hpromo"
+      ],
+      "series": "H / H Promo",
+      "category": "HighPerformanceCompute",
+      "cpuManufacturer": "Intel",
+      "accelerator": null,
+      "features": [],
+      "lifecycle": "Current",
+      "source": "https://learn.microsoft.com/azure/virtual-machines/h-series"
     }
   ]
 }

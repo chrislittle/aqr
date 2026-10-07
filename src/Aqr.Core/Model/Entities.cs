@@ -39,6 +39,8 @@ public sealed class VmFamily
     /// <summary>Comma-separated feature tags: premiumSsd, localDisk, rdma, confidential, burstable.</summary>
     public string Features { get; set; } = "";
     public string Lifecycle { get; set; } = "Current";
+    /// <summary>Earliest SKU retirement date for the family, from the Resource SKUs "RetirementDateUtc" capability (9999-01-01 = none announced).</summary>
+    public DateTime? RetirementDate { get; set; }
     public int MinVcpu { get; set; }
     public int MaxVcpu { get; set; }
     public int SkuCount { get; set; }
@@ -59,6 +61,8 @@ public sealed class SubscriptionQuota
     public string Region { get; set; } = "";
     /// <summary>Lower-cased quota name ("cores" or a family quota name).</summary>
     public string QuotaName { get; set; } = "";
+    /// <summary>The name exactly as Azure returned it (casing/spacing vary), for display.</summary>
+    public string RawName { get; set; } = "";
     public string Kind { get; set; } = QuotaKinds.Family;
     public string? FamilyId { get; set; }
     public string LocalizedName { get; set; } = "";
@@ -110,7 +114,9 @@ public static class ZoneStatuses
     public const string PartialZones = "PartialZones";
     public const string NoZones = "NoZones";
     public const string RegionBlocked = "RegionBlocked";
-    public static readonly string[] All = [AllZones, PartialZones, NoZones, RegionBlocked, Regional];
+    /// <summary>Quota exists but no SKU of the family is offered to the subscription in the region (observed live for ~30 % of family quotas).</summary>
+    public const string NotOffered = "NotOffered";
+    public static readonly string[] All = [AllZones, PartialZones, NoZones, RegionBlocked, Regional, NotOffered];
 }
 
 public sealed class FamilyZoneAccess

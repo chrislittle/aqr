@@ -539,6 +539,21 @@ deployer lacks Graph permissions, a hook script does it instead.
 | D8 | Services | **Azure-native services only.** No third-party or open-source engines |
 | D9 | SQL network | **Network Security Perimeter** for production (`AQR_SQL_NETWORK=nsp`), accepting SQL NSP public-preview terms. `privateEndpoint` stays available as the GA fallback (§5.2) |
 
+**Live validation (2026-10-07, read-only against one internal subscription, Resource Graph scoped to that subscription only)**
+
+| Finding | Evidence | Change made |
+|---|---|---|
+| Family names vary in casing **and spacing** within and across APIs | `standardDSv5Family`, `StandardDadsv7Family`, `Standard NCASv3_T4 Family`, `standard NDAMSv4_A100Family`, identical in QuotaResources and Resource SKUs | One canonical key everywhere (`Keys.Family`: strip whitespace, lower-case); original casing kept in `RawName` for display |
+| Volume is ~3× the earlier assumption | 10,284 quota rows for **one** subscription (51 regions × ~200 families); 25 % are limit 0 / usage 0 | Empty family rows skipped by default (`Aqr:IncludeEmptyQuota`), filtered inside the Resource Graph query; diff batches 25 → 5 subscriptions. §5.3 sizing should be redone with the measured ~7,700 kept rows per subscription |
+| ~30 % of family quotas have **no SKU offered** in that region for the subscription | 1,455 of 5,000 rows had no zone status | New `NotOffered` zone status; counts as "not deployable" |
+| Resource SKUs exposes **`RetirementDateUtc`** per SKU | e.g. Dv2/Ds 2028-05-01, Av2 2028-11-15; 9999-01-01 = none | `VmFamily.RetirementDate` (earliest SKU date); shown on the families page |
+| Per-region SKU calls take ~8 s; the unfiltered call returns **247 MB in 50 s** | ~48 regions per subscription → ~7 min sequential | Zones stage parallelised across all (subscription, region) pairs: **7 min → 132 s** for one subscription |
+| Azure returns a few **exact duplicate** quota rows | e.g. `standardNPSFamily` twice in francecentral | Already handled (first occurrence wins) |
+| `DefaultAzureCredential` hung on a dev box (probing the managed-identity endpoint) | ARM call timed out after 100 s | Explicit credential: user-assigned MI in Azure; Azure CLI → Azure PowerShell locally |
+| Catalog coverage | 80 of 156 live families uncatalogued | +45 entries cited to Learn (88 total); 35 skipped because Learn doesn't state the CPU manufacturer |
+| Some tenants have **no management groups** | The test subscription has none | New `AQR_SUBSCRIPTION_IDS` scope; Resource Graph never runs unscoped (it would span delegated subscriptions) |
+
+Real API response shapes are kept as sanitized test fixtures (`tests/Aqr.Tests/Fixtures`).
 **Open design questions:** none.
 
 **Implementation status and open items (2026-10-07)**
@@ -551,9 +566,10 @@ Phase 1 code, infra and tests are committed (69 tests pass). **Nothing has been 
 | O2 | Run the 4 SQL integration tests against the container (`AQR_TEST_SQL`). Validate once against cloud Azure SQL too (the container has known restriction-enforcement gaps) | next session |
 | O3 | Choose the target subscription and management groups. Confirm Entra rights to create the app registration and groups. Get someone with management-group rights to assign Reader | Chris |
 | O4 | First `azd up` to a test subscription: Graph extension, secretless Easy Auth sign-in, SQL access through the NSP (Learning → Enforced), first live sync | next session |
-| O5 | Check the live API shapes against real data (QuotaResources `mv-expand` limit, quota group paging, SKU zone fields). Run the §9.2 sizing query and pick the SQL tier from measured DTU | next session |
+| O5 | ~~Check live API shapes~~ (done for quota, SKUs, locations; see above). Still open: Quota Groups API against a tenant that has groups, and SQL tier from measured DTU | next session |
 | O6 | Confirm `GroupMember.Read.All` is enough for the Graph group-overage lookup (`transitiveMemberOf`) | next session |
-| O7 | Not built yet: Swagger UI page (the OpenAPI JSON exists), `shareableQuota`, forecast to limit, alerts, spot / Dedicated Host (phase 2), non-compute providers (phase 3) | backlog |
+| O7 | ~~Swagger UI~~ (done, `/api/docs`, Reader role required). Not built yet: `shareableQuota`, forecast to limit, alerts, spot / Dedicated Host (phase 2), non-compute providers (phase 3) | backlog |
+| O8 | CI: `.github/workflows/ci.yml` (build, tests, EF pending-model check, Bicep lint). The SQL integration job switches on when repo secrets `ACR_USERNAME`, `ACR_PASSWORD`, `MSSQL_SA_PASSWORD` exist. Needs a GitHub remote | Chris |
 
 **Resolved — row-level scoping options considered (D6 chose B)**
 

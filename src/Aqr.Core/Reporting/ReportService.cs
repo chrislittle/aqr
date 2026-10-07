@@ -42,7 +42,7 @@ public sealed class ExplorerRow
 
     public long Available => Math.Max(0, Limit - Usage);
     public double UtilPct => Limit > 0 ? 100.0 * Usage / Limit : 0;
-    public bool NotDeployable => Available > 0 && ZoneStatus is Model.ZoneStatuses.NoZones or Model.ZoneStatuses.RegionBlocked;
+    public bool NotDeployable => Available > 0 && ZoneStatus is Model.ZoneStatuses.NoZones or Model.ZoneStatuses.RegionBlocked or Model.ZoneStatuses.NotOffered;
 }
 
 public sealed record ExplorerResult(IReadOnlyList<ExplorerRow> Rows, int Total, long TotalUsage, long TotalLimit, int NotDeployable, bool HistoryAvailable);
@@ -96,7 +96,7 @@ public sealed class ReportService(IDbContextFactory<AqrDbContext> dbFactory)
         var totalUsage = await q.SumAsync(r => (long?)r.Usage, ct) ?? 0;
         var totalLimit = await q.SumAsync(r => (long?)r.Limit, ct) ?? 0;
         var notDeployable = f.Kind == QuotaKinds.Family
-            ? await q.CountAsync(r => r.Limit > r.Usage && (r.ZoneStatus == ZoneStatuses.NoZones || r.ZoneStatus == ZoneStatuses.RegionBlocked), ct)
+            ? await q.CountAsync(r => r.Limit > r.Usage && (r.ZoneStatus == ZoneStatuses.NoZones || r.ZoneStatus == ZoneStatuses.RegionBlocked || r.ZoneStatus == ZoneStatuses.NotOffered), ct)
             : 0;
 
         var rows = await Sort(q, f).Skip((f.Page - 1) * f.PageSize).Take(f.PageSize).ToListAsync(ct);
@@ -237,7 +237,7 @@ public sealed class ReportService(IDbContextFactory<AqrDbContext> dbFactory)
         var familyCount = await rows.CountAsync(ct);
         var hot = await rows.CountAsync(r => r.Limit > 0 && r.Usage * 100 >= r.Limit * 80, ct);
         var full = await rows.CountAsync(r => r.Limit > 0 && r.Usage >= r.Limit, ct);
-        var blockedQ = rows.Where(r => r.Limit > r.Usage && (r.ZoneStatus == ZoneStatuses.NoZones || r.ZoneStatus == ZoneStatuses.RegionBlocked));
+        var blockedQ = rows.Where(r => r.Limit > r.Usage && (r.ZoneStatus == ZoneStatuses.NoZones || r.ZoneStatus == ZoneStatuses.RegionBlocked || r.ZoneStatus == ZoneStatuses.NotOffered));
         var blockedCount = await blockedQ.CountAsync(ct);
         var blockedVcpu = await blockedQ.SumAsync(r => (long?)(r.Limit - r.Usage), ct) ?? 0;
         var partial = await rows.CountAsync(r => r.Limit > r.Usage && r.ZoneStatus == ZoneStatuses.PartialZones, ct);
@@ -325,7 +325,7 @@ public sealed class ReportService(IDbContextFactory<AqrDbContext> dbFactory)
             .Where(q => memberIds.Contains(q.SubscriptionId) && q.Kind == QuotaKinds.Family && (region == null || region == "*" || q.Region == region))
             .GroupBy(q => q.SubscriptionId).Select(g => new { g.Key, Usage = g.Sum(x => x.Usage) }).ToListAsync(ct);
         var blocked = await At(db, db.FamilyZoneAccess, asOf).AsNoTracking()
-            .Where(z => memberIds.Contains(z.SubscriptionId) && (z.ZoneStatus == ZoneStatuses.NoZones || z.ZoneStatus == ZoneStatuses.RegionBlocked) && (region == null || region == "*" || z.Region == region))
+            .Where(z => memberIds.Contains(z.SubscriptionId) && (z.ZoneStatus == ZoneStatuses.NoZones || z.ZoneStatus == ZoneStatuses.RegionBlocked || z.ZoneStatus == ZoneStatuses.NotOffered) && (region == null || region == "*" || z.Region == region))
             .GroupBy(z => z.SubscriptionId).Select(g => new { g.Key, N = g.Count() }).ToListAsync(ct);
 
         var members = memberIds.Select(id => new GroupMemberRow(

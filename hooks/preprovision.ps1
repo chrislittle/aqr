@@ -18,6 +18,6 @@ if ($currentSubscriptionId.Trim() -ne $env:AZURE_SUBSCRIPTION_ID.Trim()) {
     throw 'Azure CLI subscription does not match AZURE_SUBSCRIPTION_ID. Run: az account set --subscription <id>'
 }
 
-if ([string]::IsNullOrWhiteSpace($env:AQR_MANAGEMENT_GROUP_IDS)) {
-    Write-Warning 'AQR_MANAGEMENT_GROUP_IDS is empty. AQR will deploy, but sync has no management group scope until this is configured.'
+if ([string]::IsNullOrWhiteSpace($env:AQR_MANAGEMENT_GROUP_IDS) -and [string]::IsNullOrWhiteSpace($env:AQR_SUBSCRIPTION_IDS)) {
+    Write-Warning 'Neither AQR_MANAGEMENT_GROUP_IDS nor AQR_SUBSCRIPTION_IDS is set. AQR will deploy, but the sync refuses to run unscoped until one is configured.'
 }

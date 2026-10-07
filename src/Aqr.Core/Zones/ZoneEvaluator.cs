@@ -19,7 +19,7 @@ public static class ZoneEvaluator
         IReadOnlyDictionary<string, string> logicalToPhysical)
     {
         var results = new List<Result>();
-        foreach (var group in skus.GroupBy(s => s.Family.ToLowerInvariant()))
+        foreach (var group in skus.GroupBy(s => Keys.Family(s.Family)))
             results.Add(EvaluateFamily(subscriptionId, region, group.Key, group.ToList(), logicalToPhysical));
         return results;
     }
@@ -106,6 +106,12 @@ public static class ZoneEvaluator
         };
         return new Result(fza, restrictions);
     }
+
+    /// <summary>The subscription holds quota for the family in this region, but the SKUs API offers it no SKU there.</summary>
+    public static FamilyZoneAccess NotOffered(string subscriptionId, string region, string familyId) => new()
+    {
+        SubscriptionId = subscriptionId, Region = region, FamilyId = familyId, ZoneStatus = ZoneStatuses.NotOffered,
+    };
 
     /// <summary>Unmapped zones are shown as "?n" rather than guessed.</summary>
     private static string Physical(IReadOnlyDictionary<string, string> map, string logical) =>

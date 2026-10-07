@@ -117,10 +117,10 @@ public sealed class SyncService(
     private async Task InventoryAsync(SyncRun run, CancellationToken ct)
     {
         var mgs = _o.ManagementGroupIdList;
-        if (mgs.Count == 0 && !_o.UseMock)
-            throw new InvalidOperationException("No management groups configured (Aqr:ManagementGroupIds / AQR_MANAGEMENT_GROUP_IDS).");
+        if (mgs.Count == 0 && _o.SubscriptionIdList.Count == 0 && !_o.UseMock)
+            throw new InvalidOperationException("No scope configured: set Aqr:ManagementGroupIds (AQR_MANAGEMENT_GROUP_IDS) and/or Aqr:SubscriptionIds (AQR_SUBSCRIPTION_IDS).");
 
-        var subs = await source.GetSubscriptionsAsync(mgs, ct);
+        var subs = await source.GetSubscriptionsAsync(mgs, _o.SubscriptionIdList, ct);
         var incoming = subs.Select(s => new Subscription
         {
             SubscriptionId = s.SubscriptionId.ToLowerInvariant(),
@@ -142,8 +142,9 @@ public sealed class SyncService(
             subIds = await db.Subscriptions.Select(s => s.SubscriptionId).ToListAsync(ct);
 
         var regionFilter = _o.RegionList.Count > 0 ? new HashSet<string>(_o.RegionList, StringComparer.OrdinalIgnoreCase) : null;
-        var usages = (await source.GetQuotaUsagesAsync(subIds, ct))
+        var usages = (await source.GetQuotaUsagesAsync(subIds, _o.IncludeEmptyQuota, ct))
             .Where(u => regionFilter is null || regionFilter.Contains(u.Region))
+            .Where(u => _o.IncludeEmptyQuota || u.Limit > 0 || u.CurrentValue > 0 || u.Name.Equals("cores", StringComparison.OrdinalIgnoreCase))
             .ToList();
         var bySub = usages.GroupBy(u => u.SubscriptionId.ToLowerInvariant()).ToDictionary(g => g.Key, g => g.ToList());
 
@@ -159,7 +160,7 @@ public sealed class SyncService(
                 var rows = new List<QuotaUsage>();
                 foreach (var r in regions)
                 {
-                    try { rows.AddRange(await source.GetComputeUsagesAsync(sub, r, token)); }
+                    try { rows.AddRange((await source.GetComputeUsagesAsync(sub, r, token)).Where(u => _o.IncludeEmptyQuota || u.Limit > 0 || u.CurrentValue > 0 || u.Name.Equals("cores", StringComparison.OrdinalIgnoreCase))); }
                     catch (ArmRequestException ex) when ((int)ex.Status is 400 or 404 or 409) { /* region not enabled for this subscription */ }
                 }
                 lock (bySub) bySub[sub] = rows;
@@ -201,13 +202,14 @@ public sealed class SyncService(
 
     private static SubscriptionQuota ToEntity(QuotaUsage u)
     {
-        var name = u.Name.ToLowerInvariant();
+        var name = Keys.Family(u.Name);
         var isCores = name == "cores";
         return new SubscriptionQuota
         {
             SubscriptionId = u.SubscriptionId.ToLowerInvariant(),
             Region = u.Region.ToLowerInvariant(),
             QuotaName = name,
+            RawName = u.Name,
             Kind = isCores ? QuotaKinds.RegionalTotal : QuotaKinds.Family,
             FamilyId = isCores ? null : name,
             LocalizedName = u.LocalizedName,
@@ -229,7 +231,8 @@ public sealed class SyncService(
     // ------------------------------------------------------------------ Quota Groups (S3)
     private async Task GroupsAsync(SyncRun run, CancellationToken ct)
     {
-        var mgs = _o.ManagementGroupIdList.Count > 0 ? _o.ManagementGroupIdList : ["mg-contoso"];
+        // Quota Groups live under management groups; with only a subscription scope there are none to read.
+        var mgs = _o.ManagementGroupIdList.Count > 0 ? _o.ManagementGroupIdList : _o.UseMock ? ["mg-contoso"] : [];
         var regionFilter = _o.RegionList.Count > 0 ? new HashSet<string>(_o.RegionList, StringComparer.OrdinalIgnoreCase) : null;
 
         var groups = new List<QuotaGroup>();
@@ -280,10 +283,10 @@ public sealed class SyncService(
                     members.AddRange(subs.Select(s => new QuotaGroupMember { ManagementGroupId = mgId, GroupName = g.GroupName.ToLowerInvariant(), SubscriptionId = s }));
                     foreach (var (region, limits, uses) in perRegion)
                     {
-                        var usageByFamily = uses.GroupBy(u => u.ResourceName.ToLowerInvariant()).ToDictionary(x => x.Key, x => x.First());
+                        var usageByFamily = uses.GroupBy(u => Keys.Family(u.ResourceName)).ToDictionary(x => x.Key, x => x.First());
                         foreach (var l in limits)
                         {
-                            var fam = l.ResourceName.ToLowerInvariant();
+                            var fam = Keys.Family(l.ResourceName);
                             quotas.Add(new GroupQuota
                             {
                                 ManagementGroupId = mgId, GroupName = g.GroupName.ToLowerInvariant(), Region = region.ToLowerInvariant(), FamilyId = fam,
@@ -351,41 +354,58 @@ public sealed class SyncService(
         var results = new ConcurrentDictionary<string, SubZoneResult>(StringComparer.OrdinalIgnoreCase);
         var coverage = new ConcurrentBag<SyncCoverage>();
         var regionsMeta = new ConcurrentDictionary<string, LocationInfo>(StringComparer.OrdinalIgnoreCase);
+        var options = new ParallelOptions { MaxDegreeOfParallelism = _o.Sync.MaxParallel, CancellationToken = ct };
 
-        await Parallel.ForEachAsync(subIds, new ParallelOptions { MaxDegreeOfParallelism = _o.Sync.MaxParallel, CancellationToken = ct }, async (sub, token) =>
+        // 1) Locations (zone mappings) per subscription.
+        var locationsBySub = new ConcurrentDictionary<string, IReadOnlyList<LocationInfo>>(StringComparer.OrdinalIgnoreCase);
+        var failedSubs = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await Parallel.ForEachAsync(subIds, options, async (sub, token) =>
         {
             try
             {
                 var locations = await source.GetLocationsAsync(sub, token);
                 foreach (var l in locations) regionsMeta.TryAdd(l.Name, l);
-                var mappings = locations.SelectMany(l => l.ZoneMappings.Select(z => new ZoneMapping
-                {
-                    SubscriptionId = sub, Region = l.Name.ToLowerInvariant(), LogicalZone = z.Key, PhysicalZone = z.Value,
-                })).ToList();
-
-                var fams = new List<FamilyZoneAccess>();
-                var restr = new List<SkuRestriction>();
-                foreach (var region in famBySubRegion.Keys.Where(k => k.Sub == sub).Select(k => k.Region))
-                {
-                    var wanted = famBySubRegion[(sub, region)];
-                    var skus = await source.GetVmSkusAsync(sub, region, token);
-                    foreach (var s in skus) Observe(s);
-                    var map = locations.FirstOrDefault(l => l.Name.Equals(region, StringComparison.OrdinalIgnoreCase))?.ZoneMappings
-                              ?? new Dictionary<string, string>();
-                    foreach (var r in ZoneEvaluator.Evaluate(sub, region, skus.Where(s => wanted.Contains(s.Family)).ToList(), map))
-                    {
-                        fams.Add(r.Family);
-                        restr.AddRange(r.Restrictions);
-                    }
-                }
-                results[sub] = new SubZoneResult(mappings, fams, restr);
+                locationsBySub[sub] = locations;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                coverage.Add(Cov(run, sub, "Failed", ex.Message));
-            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { failedSubs.TryAdd(sub, ex.Message); }
         });
 
+        // 2) SKUs per (subscription, region), all pairs in parallel. Live: ~8 s per call and ~48 regions per subscription,
+        //    so per-subscription sequencing took ~7 min/subscription. The unfiltered SKUs call returned 247 MB in 50 s,
+        //    so per-region calls it is.
+        var perPair = new ConcurrentDictionary<(string Sub, string Region), (List<FamilyZoneAccess> Fams, List<SkuRestriction> Restr)>();
+        var pairs = famBySubRegion.Keys.Where(k => locationsBySub.ContainsKey(k.Sub)).ToList();
+        await Parallel.ForEachAsync(pairs, options, async (pair, token) =>
+        {
+            var (sub, region) = pair;
+            if (failedSubs.ContainsKey(sub)) return;
+            try
+            {
+                var wanted = famBySubRegion[pair];
+                var skus = await source.GetVmSkusAsync(sub, region, token);
+                foreach (var s in skus) Observe(s);
+                var map = locationsBySub[sub].FirstOrDefault(l => l.Name.Equals(region, StringComparison.OrdinalIgnoreCase))?.ZoneMappings
+                          ?? new Dictionary<string, string>();
+                var evaluated = ZoneEvaluator.Evaluate(sub, region, skus.Where(s => wanted.Contains(Keys.Family(s.Family))).ToList(), map);
+                var fams = evaluated.Select(r => r.Family).ToList();
+                // Families that hold quota here but have no SKU offered to this subscription in this region.
+                var offered = fams.Select(f => f.FamilyId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                fams.AddRange(wanted.Where(w => !offered.Contains(w)).Select(w => ZoneEvaluator.NotOffered(sub, region, w)));
+                perPair[pair] = (fams, evaluated.SelectMany(r => r.Restrictions).ToList());
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { failedSubs.TryAdd(sub, $"{region}: {ex.Message}"); }
+        });
+
+        foreach (var (sub, error) in failedSubs) coverage.Add(Cov(run, sub, "Failed", error));
+        foreach (var sub in subIds.Where(s => locationsBySub.ContainsKey(s) && !failedSubs.ContainsKey(s)))
+        {
+            var mappings = locationsBySub[sub].SelectMany(l => l.ZoneMappings.Select(z => new ZoneMapping
+            {
+                SubscriptionId = sub, Region = l.Name.ToLowerInvariant(), LogicalZone = z.Key, PhysicalZone = z.Value,
+            })).ToList();
+            var mine = perPair.Where(kv => kv.Key.Sub == sub).Select(kv => kv.Value).ToList();
+            results[sub] = new SubZoneResult(mappings, mine.SelectMany(m => m.Fams).ToList(), mine.SelectMany(m => m.Restr).ToList());
+        }
         var total = new ApplyCounts();
         int seen = 0;
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
@@ -428,7 +448,7 @@ public sealed class SyncService(
 
     private void Observe(SkuInfo s)
     {
-        var facts = _skuFacts.GetOrAdd(s.Family.ToLowerInvariant(), _ => new SkuFamilyFacts());
+        var facts = _skuFacts.GetOrAdd(Keys.Family(s.Family), _ => new SkuFamilyFacts());
         lock (facts)
         {
             facts.Skus.Add(s.Name);
@@ -443,6 +463,11 @@ public sealed class SyncService(
             if (Is(s, "RdmaEnabled")) facts.Features.Add("rdma");
             if (s.IntCapability("MaxResourceVolumeMB") is > 0) facts.Features.Add("localDisk");
             if (s.Capabilities.ContainsKey("ConfidentialComputingType")) facts.Features.Add("confidential");
+            if (s.Capabilities.TryGetValue("RetirementDateUtc", out var rd)
+                && DateTime.TryParse(rd, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var when)
+                && when.Year < 9999)
+                facts.Retirement = facts.Retirement is { } prior && prior < when ? prior : when;
+            facts.RawName ??= s.Family;
         }
         static bool Is(SkuInfo s, string cap) => s.Capabilities.TryGetValue(cap, out var v) && v.Equals("True", StringComparison.OrdinalIgnoreCase);
     }
@@ -455,6 +480,8 @@ public sealed class SyncService(
         public bool HasGpu { get; set; }
         public string? Architecture { get; set; }
         public HashSet<string> Features { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public DateTime? Retirement { get; set; }
+        public string? RawName { get; set; }
     }
 
     // ------------------------------------------------------------------ Catalog (S7 ⨝ observed)
@@ -462,7 +489,7 @@ public sealed class SyncService(
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var observed = await db.SubscriptionQuotas.Where(q => q.Kind == QuotaKinds.Family)
-            .GroupBy(q => q.FamilyId!).Select(g => new { FamilyId = g.Key, Localized = g.Max(x => x.LocalizedName) })
+            .GroupBy(q => q.FamilyId!).Select(g => new { FamilyId = g.Key, Localized = g.Max(x => x.LocalizedName), Raw = g.Max(x => x.RawName) })
             .ToListAsync(ct);
         var groupFams = await db.GroupQuotas.Select(g => g.FamilyId).Distinct().ToListAsync(ct);
         var existing = await db.VmFamilies.AsNoTracking().ToDictionaryAsync(f => f.FamilyId, StringComparer.OrdinalIgnoreCase, ct);
@@ -470,16 +497,21 @@ public sealed class SyncService(
         var ids = observed.Select(o => o.FamilyId).Concat(groupFams).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var incoming = ids.Select(id =>
         {
-            var localized = observed.FirstOrDefault(o => o.FamilyId.Equals(id, StringComparison.OrdinalIgnoreCase))?.Localized ?? "";
-            var quotaName = existing.TryGetValue(id, out var prev) && prev.QuotaName.Length > 0 ? prev.QuotaName : QuotaNameFromLocalized(id, localized);
+            var obs = observed.FirstOrDefault(o => o.FamilyId.Equals(id, StringComparison.OrdinalIgnoreCase));
+            var localized = obs?.Localized ?? "";
+            existing.TryGetValue(id, out var prev);
+            _skuFacts.TryGetValue(id, out var seen);
+            // Prefer the name exactly as Azure returned it; fall back to the stored one, then the key.
+            var quotaName = obs?.Raw is { Length: > 0 } raw ? raw : seen?.RawName ?? (prev?.QuotaName is { Length: > 0 } p ? p : QuotaNameFromLocalized(id, localized));
             var f = catalog.Classify(quotaName, localized);
-            f.FamilyId = id.ToLowerInvariant();
+            f.FamilyId = Keys.Family(id);
 
             if (_skuFacts.TryGetValue(id, out var facts))
             {
                 lock (facts)
                 {
                     f.MinVcpu = facts.MinVcpu; f.MaxVcpu = facts.MaxVcpu; f.SkuCount = facts.Skus.Count;
+                    f.RetirementDate = facts.Retirement;
                     if (facts.Architecture is not null) f.Architecture = facts.Architecture;
                     if (facts.HasGpu && f.AcceleratorType == "None") f.AcceleratorType = "GPU";
                     f.Features = string.Join(',', f.Features.Split(',', StringSplitOptions.RemoveEmptyEntries).Concat(facts.Features)
@@ -489,7 +521,7 @@ public sealed class SyncService(
             else if (prev is not null)
             {
                 // No SKU data this process lifetime: keep what an earlier Zones stage learned.
-                f.MinVcpu = prev.MinVcpu; f.MaxVcpu = prev.MaxVcpu; f.SkuCount = prev.SkuCount;
+                f.MinVcpu = prev.MinVcpu; f.MaxVcpu = prev.MaxVcpu; f.SkuCount = prev.SkuCount; f.RetirementDate = prev.RetirementDate;
                 f.Architecture = prev.Architecture; f.Features = prev.Features.Length > 0 ? prev.Features : f.Features;
                 if (prev.AcceleratorType != "None" && f.AcceleratorType == "None") f.AcceleratorType = prev.AcceleratorType;
             }

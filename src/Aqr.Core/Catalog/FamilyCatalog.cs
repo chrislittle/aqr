@@ -57,7 +57,7 @@ public sealed partial class FamilyCatalog
         var token = Normalize(quotaName);
         var f = new VmFamily
         {
-            FamilyId = quotaName.ToLowerInvariant(),
+            FamilyId = Keys.Family(quotaName),
             QuotaName = quotaName,
             LocalizedName = localizedName,
             Generation = Generation(token),
