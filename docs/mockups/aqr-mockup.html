@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Azure Quota Reporting (AQR) — UI mockup</title>
+<link rel="stylesheet" href="aqr-mockup.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#overview">
+    <span class="logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+    Azure Quota Reporting
+  </a>
+  <nav class="nav" id="nav">
+    <a data-page="overview" class="active">Overview</a>
+    <a data-page="explorer">Quota explorer</a>
+    <a data-page="groups">Quota groups</a>
+    <a data-page="zones">Zones &amp; SKU access</a>
+    <a data-page="trends">Trends</a>
+    <a data-page="families">VM families</a>
+    <a data-page="admin">Admin</a>
+  </nav>
+  <div class="right">
+    <span title="Signed in with Entra ID · role AQR.Admin">contoso.onmicrosoft.com · AQR.Admin</span>
+    <span class="avatar">CL</span>
+    <a class="signout" href="#">Sign out</a>
+  </div>
+</header>
+<div class="mockbanner">⚠ UI mockup — <b>synthetic data</b> (Contoso tenant, 8 subscriptions, 2 quota groups). Family names follow Azure quota naming; numbers are invented.</div>
+
+<main class="wrap">
+
+<!-- ============================ OVERVIEW ============================ -->
+<section class="page on" id="p-overview">
+  <div class="pagehead">
+    <div><h1>VM quota overview</h1><div class="sub">Regional vCPU quota, zonal SKU access and Quota Groups across your management groups</div></div>
+    <div class="headtools">
+      <span class="scope"><span class="dot"></span>Scope: mg-contoso (root) · 8 subscriptions</span>
+      <span class="pick">🕘 <select><option>Snapshot · 07 Oct 2026 13:00 UTC</option><option>07 Oct 2026 12:00 UTC</option><option>06 Oct 2026 13:00 UTC</option></select></span>
+    </div>
+  </div>
+  <div class="kpis" id="ov-kpis"></div>
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div class="ch"><h2>Most constrained family quotas</h2><span class="hint">family × region × subscription · regional quota with zonal access alongside</span></div>
+        <div class="scroll" style="max-height:none"><table id="ov-top"></table></div>
+        <div class="callout"><b>Reading the Zones column:</b> vCPU quota is <b>regional</b>; the zone pills show whether this subscription can actually deploy the family's SKUs in each zone
+          (<span class="z open">1</span> open · <span class="z restr">2</span> restricted for this subscription · <span class="z none">3</span> not offered). Zone numbers here are <b>logical for that subscription</b>.</div>
+      </div>
+      <div class="card">
+        <div class="ch"><h2>Utilization heatmap — region × VM category</h2><span class="hint">family quota usage ÷ limit, all subscriptions</span></div>
+        <div class="cb" style="overflow:auto"><table class="heat" id="ov-heat"></table></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <div class="ch"><h2>vCPUs in use by CPU manufacturer</h2><span class="hint">family quotas</span></div>
+        <div class="cb" style="display:flex;gap:18px;align-items:center"><div id="ov-donut"></div><div class="legend" id="ov-donut-lg" style="flex:1"></div></div>
+      </div>
+      <div class="card">
+        <div class="ch"><h2>Quota held but not deployable</h2><span class="hint">available &gt; 0 and zone/region restricted</span></div>
+        <div class="cb" id="ov-blocked"></div>
+      </div>
+      <div class="card">
+        <div class="ch"><h2>Regional vCPU totals</h2><span class="hint">“Total Regional vCPUs” (cores) · top regions</span></div>
+        <div class="cb" id="ov-regional"></div>
+      </div>
+      <div class="card">
+        <div class="ch"><h2>Capacity-restricted series still holding quota</h2></div>
+        <div class="cb" id="ov-lifecycle"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ EXPLORER ============================ -->
+<section class="page" id="p-explorer">
+  <div class="pagehead">
+    <div><h1>Quota explorer</h1><div class="sub">Every subscription × region × VM family quota, with zonal SKU access. All filters map 1:1 to <code>/api/v1/quota/subscriptions</code>.</div></div>
+    <div class="headtools">
+      <span class="note">Zone numbering</span>
+      <span class="seg" id="zmode"><button data-m="logical" class="on">Logical (per sub)</button><button data-m="physical">Physical</button></span>
+      <button class="btn" id="ex-csv">⬇ Export CSV</button>
+    </div>
+  </div>
+  <div class="explorer">
+    <div class="card fpanel" id="ex-filters"></div>
+    <div>
+      <div class="card">
+        <div class="resultsbar"><div id="ex-summary"></div><div class="note" id="ex-zonewarn"></div></div>
+        <div class="apiline" id="ex-api"></div>
+        <div class="scroll"><table id="ex-table"></table></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ GROUPS ============================ -->
+<section class="page" id="p-groups">
+  <div class="pagehead">
+    <div><h1>Quota groups</h1><div class="sub">Group limit, unallocated pool and per-subscription allocations (<code>Microsoft.Quota/groupQuotas</code> · 2025-09-01)</div></div>
+    <div class="headtools">
+      <span class="pick">👥 <select id="g-sel"></select></span>
+      <span class="pick">📍 <select id="g-region"></select></span>
+    </div>
+  </div>
+  <div class="kpis" id="g-kpis"></div>
+  <div class="callout warn" style="margin:0 0 16px">Deployments are checked against the <b>subscription</b> quota, not the group. Unallocated pool vCPUs are <b>not deployable</b> until they're allocated to a member subscription. A group allocation doesn't grant regional or zonal access either; check the Zones column.</div>
+  <div class="grid">
+    <div class="card">
+      <div class="ch"><h2>Group limits by VM family</h2><span class="hint" id="g-hint"></span></div>
+      <div class="scroll" style="max-height:none"><table id="g-table"></table></div>
+      <div class="cb" id="g-legend" style="display:flex;gap:14px;flex-wrap:wrap;border-top:1px solid var(--line)"></div>
+    </div>
+    <div>
+      <div class="card">
+        <div class="ch"><h2>Member subscriptions</h2><span class="hint" id="g-mg"></span></div>
+        <table id="g-members"></table>
+      </div>
+      <div class="card">
+        <div class="ch"><h2>Zone mapping across members</h2><span class="hint">logical → physical</span></div>
+        <div class="cb" id="g-zmap"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ ZONES ============================ -->
+<section class="page" id="p-zones">
+  <div class="pagehead">
+    <div><h1>Zones &amp; SKU access</h1><div class="sub">Per SKU: which zones the SKU is offered in, and which are restricted for each subscription (Compute Resource SKUs API)</div></div>
+    <div class="headtools">
+      <span class="pick">📍 <select id="z-region"></select></span>
+      <span class="pick">🧩 <select id="z-family"></select></span>
+      <span class="seg" id="zmode2"><button data-m="logical" class="on">Logical</button><button data-m="physical">Physical</button></span>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <div class="ch"><h2>SKU × subscription × zone</h2><span class="hint" id="z-hint"></span></div>
+      <div class="scroll" style="max-height:none"><table id="z-table"></table></div>
+      <div class="callout">Regional vCPU quota applies to the whole region. A zone is <b>open</b> only if the SKU is offered there <b>and</b> not restricted for the subscription.
+        In <b>physical</b> mode, columns are datacenter zones (e.g. <code>eastus2-az1</code>), so subscriptions with different logical mappings line up correctly.</div>
+    </div>
+    <div>
+      <div class="card"><div class="ch"><h2>Family quota in this region</h2><span class="hint">regional</span></div><table id="z-quota"></table></div>
+      <div class="card"><div class="ch"><h2>Logical → physical zone mapping</h2></div><div class="cb" id="z-map"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ TRENDS ============================ -->
+<section class="page" id="p-trends">
+  <div class="pagehead">
+    <div><h1>Trends</h1><div class="sub">Usage vs limit over time from hourly snapshots (90-day retention)</div></div>
+    <div class="headtools">
+      <span class="pick">🧩 <select id="t-key"></select></span>
+      <span class="seg" id="t-range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button></span>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card"><div class="ch"><h2 id="t-title"></h2><span class="hint">usage · limit · group allocation</span></div><div class="cb" id="t-chart"></div></div>
+    <div class="card"><div class="ch"><h2>Change log</h2><span class="hint">limit changes detected between snapshots</span></div><div class="cb" id="t-log"></div></div>
+  </div>
+</section>
+
+<!-- ============================ FAMILIES ============================ -->
+<section class="page" id="p-families">
+  <div class="pagehead">
+    <div><h1>VM family catalog</h1><div class="sub">Attributes come from the Resource SKUs API, plus <code>catalog/vm-families.json</code> for CPU/GPU vendor and lifecycle. Every row cites its Learn source.</div></div>
+    <div class="headtools"><span class="note">Taxonomy: Azure Compute Fleet <code>VMAttributes</code> enums (CpuManufacturer, VMCategory, AcceleratorManufacturer)</span></div>
+  </div>
+  <div class="card"><div class="scroll" style="max-height:none"><table id="f-table"></table></div></div>
+</section>
+
+<!-- ============================ ADMIN ============================ -->
+<section class="page" id="p-admin">
+  <div class="pagehead">
+    <div><h1>Admin · sync health</h1><div class="sub">Each stage reports coverage; anything under 100% is a warning, never a silent success</div></div>
+    <div class="headtools"><button class="btn primary">⟳ Run sync now</button></div>
+  </div>
+  <div class="kpis" id="a-kpis"></div>
+  <div class="grid">
+    <div class="card"><div class="ch"><h2>Recent sync runs</h2><span class="hint">AQRSyncRun_CL</span></div><table id="a-runs"></table></div>
+    <div>
+      <div class="card"><div class="ch"><h2>Coverage gaps</h2></div><div class="cb" id="a-gaps"></div></div>
+      <div class="card"><div class="ch"><h2>Configuration</h2></div><div class="cb"><div class="kv" id="a-config"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="foot">© 2026 · Azure Quota Reporting (AQR) · mockup v0.1 · data sources: Resource Graph QuotaResources · Microsoft.Quota 2025-09-01 · Compute Resource SKUs · Subscriptions/locations</div>
+</main>
+
+<script src="aqr-mockup.js"></script>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<meta charset="utf-8">
+<!--
+  Source for docs/images/architecture.png. Render with headless Edge/Chrome:
+    msedge --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
+           --window-size=1180,1500 --screenshot=architecture.png architecture.html
+  Palette matches ghcp-credit-visibility-azure (Fluent): #243A5E navy, #0078D4 / #107C10 / #6E5494 / #CA5010.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { width: 1180px; padding: 32px; background: #fff; font-family: 'Segoe UI', system-ui, sans-serif; color: #201F1E; }
+  h1 { font-size: 21px; font-weight: 700; color: #243A5E; padding-bottom: 9px; border-bottom: 2px solid #EDEBE9; }
+  .lanes, .cards3 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .lanes { margin-top: 18px; }
+  .head { display: flex; align-items: center; gap: 12px; height: 20px; margin-bottom: 13px; }
+  .head-title { font-size: 15px; font-weight: 700; color: #243A5E; }
+  .pill { font-size: 10.5px; font-weight: 700; line-height: 1; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .pill.blue { color: #1E40AF; background: #EDF2FB; } .pill.purple { color: #5C2D91; background: #F3EEFA; }
+  .pill.green { color: #0B6A0B; background: #EDF6ED; } .pill.red { color: #A4262C; background: #FDE7E9; }
+  .box { height: 68px; border: 1px solid #CFE0F5; border-radius: 8px; background: linear-gradient(180deg, #F6F9FE, #EFF4FB);
+         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+  .box-title { font-size: 15px; font-weight: 700; } .box-sub { font-size: 12px; color: #605E5C; }
+  .arrow { height: 32px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #605E5C; }
+  .arrow b { color: #201F1E; }
+  .card { border: 1px solid #EDEBE9; border-radius: 8px; background: #fff; padding: 12px 16px; box-shadow: 0 1px 2px rgba(0,0,0,.045); }
+  .card.blue { border-left: 5px solid #0078D4; } .card.green { border-left: 5px solid #107C10; }
+  .card.purple { border-left: 5px solid #6E5494; } .card.orange { border-left: 5px solid #CA5010; }
+  .card-title { font-size: 15px; font-weight: 700; margin-bottom: 3px; }
+  .card-body { font-size: 12px; color: #605E5C; line-height: 1.5; }
+  .src { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .src .card { padding: 9px 12px; } .src .card-title { font-size: 13px; }
+  .nsp { margin-top: 0; border: 2px dashed #107C10; border-radius: 10px; padding: 12px; background: #F7FBF7; position: relative; }
+  .nsp-label { position: absolute; top: -11px; left: 14px; background: #fff; padding: 0 8px; font-size: 11px; font-weight: 800; color: #0B6A0B; letter-spacing: .3px; }
+  .nsp .card + .card { margin-top: 8px; }
+  .zone { margin-top: 34px; }
+  .zrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .zrow .card { border-top: 4px solid; } .z1 { border-top-color: #0078D4 !important; } .z2 { border-top-color: #6E5494 !important; } .z3 { border-top-color: #CA5010 !important; }
+  .cards3 { grid-template-columns: 1fr 1fr 1fr; margin-top: 34px; gap: 16px; }
+  .fcard { border: 1px solid #EDEBE9; border-radius: 8px; padding: 14px 16px; }
+  .fcard-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; } .fcard-body { font-size: 12px; color: #605E5C; line-height: 1.55; }
+  .caption { margin-top: 26px; font-size: 12px; color: #605E5C; line-height: 1.6; }
+  code { font-family: Consolas, 'Cascadia Mono', monospace; font-size: .93em; background: #F3F2F1; padding: 1px 5px; border-radius: 3px; color: #3B3A39; }
+</style>
+
+<h1>Azure Quota Reporting (AQR) — how it fits together</h1>
+
+<div class="lanes">
+  <div>
+    <div class="head"><span class="head-title">Request path</span><span class="pill blue">every page view / API call</span></div>
+    <div class="box"><div class="box-title">Capacity planner, platform team, admin</div><div class="box-sub">browser or API client (Entra bearer token)</div></div>
+    <div class="arrow">▼&nbsp; HTTPS — sign-in redirect</div>
+    <div class="card"><div class="card-title">Microsoft Entra ID</div>
+      <div class="card-body">App registration + Easy Auth · app roles <code>AQR.Reader</code> / <code>AQR.Admin</code> · <b>secretless</b> (managed identity federated credential)</div></div>
+    <div class="arrow">▼&nbsp; token</div>
+    <div class="card blue"><div class="card-title">App Service · .NET 10</div>
+      <div class="card-body">Razor Pages UI + <code>/api/v1</code> (OpenAPI) · filters → parameterised KQL · result cache keyed by SnapshotId</div></div>
+    <div class="arrow">▼&nbsp; reads only — <b>&nbsp;never&nbsp;</b> calls ARM on a page view</div>
+    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER · ENFORCED</span>
+      <div class="card green"><div class="card-title">Log Analytics workspace</div>
+        <div class="card-body">AQRSubQuota · AQRGroupQuota · AQRGroupAlloc · AQRFamilyZone · AQRSkuRestriction · AQRZoneMap · AQRFamily · AQRSyncRun</div></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="head"><span class="head-title">Data path</span><span class="pill purple">background · hourly / 4h / daily</span></div>
+    <div class="box"><div class="box-title">SyncWorker (BackgroundService)</div><div class="box-sub">single leader via blob lease · user-assigned managed identity · Reader on MGs</div></div>
+    <div class="arrow">▼&nbsp; ARM APIs only — retry, Retry-After, bounded parallelism</div>
+    <div class="src">
+      <div class="card purple"><div class="card-title">Resource Graph</div><div class="card-body"><code>QuotaResources</code> — sub × region × family usage/limit (hourly)</div></div>
+      <div class="card purple"><div class="card-title">Microsoft.Quota 2025-09-01</div><div class="card-body">Quota Groups: limit · unallocated · allocations · usage (4h)</div></div>
+      <div class="card purple"><div class="card-title">Compute Resource SKUs</div><div class="card-body">SKU→family, vCPU, GPU, arch · <b>region &amp; zone restrictions per sub</b> (daily)</div></div>
+      <div class="card purple"><div class="card-title">Subscriptions · Locations</div><div class="card-body"><code>availabilityZoneMappings</code> logical ↔ physical zones (daily)</div></div>
+    </div>
+    <div class="arrow">▼&nbsp; Logs Ingestion API (DCE + DCR) — typed rows</div>
+    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER · ENFORCED</span>
+      <div class="card green"><div class="card-title">DCE / DCR → Log Analytics</div><div class="card-body">same tables the UI reads · append-only snapshots · per-table retention</div></div>
+      <div class="card green"><div class="card-title">Storage account</div><div class="card-body">blob lease · raw API archive (gzip, lifecycle-expired) · sync watermarks</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="zone">
+  <div class="head"><span class="head-title">Three separate facts — never merged</span><span class="pill red">regional quota ≠ zonal access</span></div>
+  <div class="zrow">
+    <div class="card z1"><div class="card-title">vCPU quota — regional</div><div class="card-body">Subscription × <b>region</b> × family. There is no per-zone vCPU quota; AQR never splits it into zones.</div></div>
+    <div class="card z2"><div class="card-title">SKU access — zonal</div><div class="card-body">Subscription × region × SKU × <b>zone</b>: offered (<code>locationInfo.zones</code>) and not restricted (<code>restrictions[type=Zone]</code>).</div></div>
+    <div class="card z3"><div class="card-title">Zone identity — per subscription</div><div class="card-body">Logical zone "1" can be a different datacenter in each subscription. Cross-sub views use <b>physical</b> zones.</div></div>
+  </div>
+</div>
+
+<div class="cards3">
+  <div class="fcard"><div class="fcard-title">🔐&nbsp; Identity — no secrets</div><div class="fcard-body">One UAMI: Reader on management groups, Monitoring Metrics Publisher on DCR, Log Analytics Reader, Storage Blob Data Contributor. Shared keys disabled. No Key Vault needed in v1.</div></div>
+  <div class="fcard"><div class="fcard-title">🛡&nbsp; Network Security Perimeter</div><div class="fcard-body">Workspace, DCE and storage associated (all NSP <b>GA</b>). Inbound rule: managed identities from the AQR subscription only. Transition → Enforced.</div></div>
+  <div class="fcard"><div class="fcard-title">🚀&nbsp; <code>azd up</code></div><div class="fcard-body">Bicep provisions RG, App Service, UAMI, workspace + tables + DCR/DCE, storage, NSP, App Insights, Entra app. Hooks check az context and print MG RBAC if needed.</div></div>
+</div>
+
+<div class="caption">
+  Observability: SyncWorker emits snapshot age, subscriptions covered vs expected, rows written and throttling to Application Insights. A stage covering less than 100% of subscriptions is a warning on the Admin page, never a silent success.
+</div>

@@ -1,0 +1,15 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# azd / IaC
+.azure/
+*.tfstate*
+.terraform/
+
+# local
+.env
+*.log
+TestResults/
