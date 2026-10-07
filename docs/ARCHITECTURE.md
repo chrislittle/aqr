@@ -539,9 +539,21 @@ deployer lacks Graph permissions, a hook script does it instead.
 | D8 | Services | **Azure-native services only.** No third-party or open-source engines |
 | D9 | SQL network | **Network Security Perimeter** for production (`AQR_SQL_NETWORK=nsp`), accepting SQL NSP public-preview terms. `privateEndpoint` stays available as the GA fallback (§5.2) |
 
-**Open**
+**Open design questions:** none.
 
-None at this time.
+**Implementation status and open items (2026-10-07)**
+
+Phase 1 code, infra and tests are committed (69 tests pass). **Nothing has been deployed yet.**
+
+| # | Item | Owner |
+|---|---|---|
+| O1 | Sign up for the Azure SQL Database container Private Preview, install WSL (`wsl --install`, admin + reboot), sign in to the registry, run `scripts/dev-sql.ps1` | Chris |
+| O2 | Run the 4 SQL integration tests against the container (`AQR_TEST_SQL`). Validate once against cloud Azure SQL too (the container has known restriction-enforcement gaps) | next session |
+| O3 | Choose the target subscription and management groups. Confirm Entra rights to create the app registration and groups. Get someone with management-group rights to assign Reader | Chris |
+| O4 | First `azd up` to a test subscription: Graph extension, secretless Easy Auth sign-in, SQL access through the NSP (Learning → Enforced), first live sync | next session |
+| O5 | Check the live API shapes against real data (QuotaResources `mv-expand` limit, quota group paging, SKU zone fields). Run the §9.2 sizing query and pick the SQL tier from measured DTU | next session |
+| O6 | Confirm `GroupMember.Read.All` is enough for the Graph group-overage lookup (`transitiveMemberOf`) | next session |
+| O7 | Not built yet: Swagger UI page (the OpenAPI JSON exists), `shareableQuota`, forecast to limit, alerts, spot / Dedicated Host (phase 2), non-compute providers (phase 3) | backlog |
 
 **Resolved — row-level scoping options considered (D6 chose B)**
 
