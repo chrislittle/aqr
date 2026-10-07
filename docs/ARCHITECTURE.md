@@ -1,5 +1,8 @@
 # Azure Quota Reporting (AQR) — Architecture Design
 
+> [!WARNING]
+> **Experimental. Not working.** Work-in-progress prototype; see the [README](../README.md) before using anything here.
+
 > **Status:** v0.3 · 2026-10-07 · decisions D1–D9 applied (§13) · phase-1 code scaffolded (`src/`, `infra/`)
 > **Scope of v1:** Virtual Machine (Compute) quota — subscription quota **and** Azure Quota Groups,
 > with zonal SKU access reported separately from regional vCPU quota.

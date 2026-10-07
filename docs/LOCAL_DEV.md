@@ -1,5 +1,8 @@
 # Local development
 
+> [!WARNING]
+> **Experimental. Not working.** Work-in-progress prototype; see the [README](../README.md) before using anything here.
+
 AQR runs locally in three modes. Pick one based on what you need to test.
 
 | Mode | Database | Data | History / "as of" | Setup |

@@ -1,5 +1,8 @@
 # AQR infrastructure
 
+> [!WARNING]
+> **Experimental. Not working.** Work-in-progress prototype; see the [README](../README.md) before using anything here.
+
 Deploys the approved Azure Quota Reporting (AQR) design with `azd up`. The template is subscription-scoped and creates `rg-aqr-<environment>`, then deploys Azure-native resources into it.
 
 ## What gets deployed

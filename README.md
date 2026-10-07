@@ -1,4 +1,9 @@
-# Azure Quota Reporting (AQR)
+# Azure Quota Reporting (AQR) — Experimental
+
+> [!WARNING]
+> **Experimental. Not working.** This is a personal, work-in-progress prototype. It is not supported, not production
+> ready, and may not build, deploy or report correctly. Do not use it to make capacity or quota decisions. It is not
+> an official Microsoft product.
 
 Org-wide reporting on **Azure VM quota**: subscription quota, **Azure Quota Groups**, and **zonal SKU access**, with
 a year of point-in-time history. It's deployed into your own subscription with **`azd up`**. Users sign in with
