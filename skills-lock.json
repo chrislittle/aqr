@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "skills": {
+    "azuresql-db-auth": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-auth/SKILL.md",
+      "computedHash": "572dff38933469379e6906e4f76a7cd9bde2f7125dfba99ebe31e77e4281db30"
+    },
+    "azuresql-db-ci": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-ci/SKILL.md",
+      "computedHash": "10ead4603b7f0624693a0db6d2494c423552cfaf280672c35340d7d2b3b233e0"
+    },
+    "azuresql-db-connections": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-connections/SKILL.md",
+      "computedHash": "e331d253d4979d3bd329277d778dde74a22f568b25b4ac01d308843dcfdde6be"
+    },
+    "azuresql-db-container": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-container/SKILL.md",
+      "computedHash": "f7bbc5bbc54587216487693cd49e2fb85fac2f21c51a31c52e5c4760bf5da443"
+    },
+    "azuresql-db-dab": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-dab/SKILL.md",
+      "computedHash": "9e619aba7b960b89bbd15e463332a2beac9071be37f3b8fe61d7665f2ebc2d19"
+    },
+    "azuresql-db-faq": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-faq/SKILL.md",
+      "computedHash": "a9bebde4f477e11065ad44dc25aab6aeb735706b49ec7a0fb9ab01847acd240f"
+    },
+    "azuresql-db-feedback": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-feedback/SKILL.md",
+      "computedHash": "81cc590f0b2f8751a817283ca6d357820d4eeb93d6a121e8eda65ef3ab1fbfc1"
+    },
+    "azuresql-db-from-sql-server": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-from-sql-server/SKILL.md",
+      "computedHash": "c4b46fd8e1e6343d2ec1595193e64f7ca3acbc6bae513d11566b4c58381e1002"
+    },
+    "azuresql-db-functions": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-functions/SKILL.md",
+      "computedHash": "38d62db8b7513063dc4ec8a30cb571be83ce01e4fc0c02679f149500a55e477e"
+    },
+    "azuresql-db-import": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-import/SKILL.md",
+      "computedHash": "821fa0e7a1e12a68d693b192eecdeb87f1dd6014894e879bff9d820aea6ef6a3"
+    },
+    "azuresql-db-local-to-cloud": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-local-to-cloud/SKILL.md",
+      "computedHash": "3528e75350b2f0f8d8ebd056869fc61e78262510d5d17fd0b20f187a4f98aade"
+    },
+    "azuresql-db-rag": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-rag/SKILL.md",
+      "computedHash": "c21c3ad7f924ff6dcf440853679673962ba29d980147fae7f2b0ada24fabca55"
+    },
+    "azuresql-db-scaffold": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-scaffold/SKILL.md",
+      "computedHash": "5a8f3faeb70269961541ecdc072aae82a8d3ead82568fb20b12ce1094d7712b9"
+    },
+    "azuresql-db-schema-migration": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-schema-migration/SKILL.md",
+      "computedHash": "f0ef6b10dbce4ba0f0bcff12f2f2a16f8e1355d7ed7e16502a92a73fbd10dc4f"
+    },
+    "azuresql-db-seed": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-seed/SKILL.md",
+      "computedHash": "ea86c05defc27e6daaf317d7a0682afe1fd065976b18279abf930293efd007be"
+    },
+    "azuresql-db-sidecar": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-sidecar/SKILL.md",
+      "computedHash": "5046a2ab765dbbdb79070c8e6c8349d54e718119735256c27fb7254761464d18"
+    },
+    "azuresql-db-testing": {
+      "source": "microsoft/azure-sql-database-container",
+      "sourceType": "github",
+      "skillPath": "skills/azuresql-db-testing/SKILL.md",
+      "computedHash": "0fd8e3b04a7db314187a9926c95ff3fa1aef7ea89063cf6bf04125a09260d617"
+    }
+  }
+}

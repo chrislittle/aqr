@@ -1,6 +1,6 @@
 # Azure Quota Reporting (AQR) — Architecture Design
 
-> **Status:** Draft v0.2 · 2026-10-07 · decisions D1–D9 applied (§13)
+> **Status:** v0.3 · 2026-10-07 · decisions D1–D9 applied (§13) · phase-1 code scaffolded (`src/`, `infra/`)
 > **Scope of v1:** Virtual Machine (Compute) quota — subscription quota **and** Azure Quota Groups,
 > with zonal SKU access reported separately from regional vCPU quota.
 > **Mockup:** [`docs/mockups/aqr-mockup.html`](mockups/aqr-mockup.html) (open in a browser — filters work on synthetic data)
@@ -136,8 +136,7 @@ All services are Azure-native (decision D8).
 | Principal | Role | Scope | Purpose |
 |---|---|---|---|
 | AQR UAMI | **Reader** | Each in-scope **management group** (or the tenant root MG) | ARG `QuotaResources`/`ResourceContainers`, Resource SKUs, Subscriptions locations, and `Microsoft.Quota/groupQuotas/*/read` (Reader includes `*/read`) |
-| AQR UAMI | Contained database user (`CREATE USER … FROM EXTERNAL PROVIDER`) with `db_datareader`, `db_datawriter`, `db_ddladmin` | AQR database | Reads/writes; `db_ddladmin` because the app applies EF Core migrations at startup (same as the GHCP app) |
-| Entra group (`AQR_SQL_ADMIN_GROUP_ID`) | Microsoft Entra admin of the logical server | SQL logical server | Break-glass and DBA access. **Entra-only authentication**: no SQL logins or passwords exist |
+| Entra group **AQR SQL Admins (env)**, created by `azd up` | Microsoft Entra admin of the logical server | SQL logical server | Members: the AQR UAMI, the deployer, plus `AQR_SQL_ADMIN_OBJECT_IDS`. **Entra-only authentication**: no SQL logins or passwords exist. The app gets database access through this group instead of a `CREATE USER` step, because with the NSP enforced the deployer's machine can't reach SQL to run one. Trade-off: the app is `dbo` of its own database (it also applies EF Core migrations). |
 | AQR UAMI | **Storage Blob Data Contributor** | Storage account | Raw archive |
 | AQR UAMI | Microsoft Graph `GroupMember.Read.All` (application) | Tenant | Group-overage resolution for report visibility (§4.3) |
 | Users | App role `AQR.Reader` / `AQR.Admin` (assigned to Entra groups) | Enterprise app | UI/API access |
@@ -330,7 +329,7 @@ rowstore index and page compression on the history table.
 | `quota.QuotaGroup` | ✔ | ManagementGroupId, GroupName | DisplayName, ProvisioningState |
 | `quota.QuotaGroupMember` | ✔ | ManagementGroupId, GroupName, SubscriptionId | — |
 | `quota.GroupQuota` | ✔ | ManagementGroupId, GroupName, Region, FamilyId | GroupLimit, AvailableLimit (unallocated), AllocatedTotal, GroupUsage |
-| `quota.GroupAllocation` | ✔ | ManagementGroupId, GroupName, SubscriptionId, Region, FamilyId | QuotaAllocated, ShareableQuota |
+| `quota.GroupAllocation` | ✔ | ManagementGroupId, GroupName, SubscriptionId, Region, FamilyId | QuotaAllocated (from `allocatedToSubscriptions`; `shareableQuota` is a phase-2 addition) |
 | `zone.FamilyZoneAccess` | ✔ | SubscriptionId, Region, FamilyId | ZoneStatus, SkusTotal, SkusRegionOpen, OpenZonesLogical, OpenZonesPhysical, RestrictedZonesLogical, OfferedZonesLogical, ReasonCodes |
 | `zone.SkuRestriction` | ✔ | SubscriptionId, Region, Sku | FamilyId, RestrictionType (`Location`/`Zone`), ZonesLogical, ZonesPhysical, ReasonCode (restricted SKUs only) |
 | `zone.ZoneMapping` | ✔ | SubscriptionId, Region, ZoneLogical | ZonePhysical |
@@ -382,8 +381,9 @@ every AQR_SYNC_INTERVAL (default 1h) — single writer via sp_getapplock (sessio
                   gap check: subs/regions missing → Compute Usages API (S2)
   3. Groups       every 4h: per MG → groups → members → limits/usages per region
                   → quota.QuotaGroup, QuotaGroupMember, GroupQuota, GroupAllocation
-  4. Zones/SKUs   daily: per sub → locations (zone map) → skus?$filter=location per region
-                  → zone.ZoneMapping, zone.FamilyZoneAccess, zone.SkuRestriction
+  4. Zones/SKUs   daily: per sub → locations (zone map) → skus?$filter=location for each region where the
+                  sub holds family quota (limit or usage > 0); access rows only for those families
+                  → zone.ZoneMapping, zone.FamilyZoneAccess, zone.SkuRestriction (restricted SKUs only)
   5. Catalog      on startup: catalog/vm-families.json ⨝ observed families → dim.VmFamily
   6. Record       sync.Run + sync.Coverage per stage (+ App Insights metrics)
 ```
@@ -474,11 +474,12 @@ aqr/
 ├─ infra/
 │  ├─ main.bicep              # subscription-scope: RG + modules
 │  ├─ main.parameters.json    # maps AZD env vars
-│  └─ modules/ appservice.bicep, identity.bicep, sql.bicep (server, database, Entra-only admin),
-│              storage.bicep, nsp.bicep  ─┐ chosen by AQR_SQL_NETWORK
-│              network.bicep (VNet + PEs) ┘
-│              appinsights.bicep, entra-app.bicep (Microsoft Graph Bicep extension), rbac-mg.bicep (conditional)
-├─ src/ Aqr.Web (UI + API + SyncWorker) · Aqr.Core (ARM clients, model, EF Core + migrations) · Aqr.Tests
+│  └─ modules/entra.bicep    # app registration, app roles, MI federated credential, SQL admin group
+│                            # (Microsoft Graph Bicep extension; no AVM exists for Graph)
+│     everything else is Azure Verified Modules (br/public:avm/res/...), see infra/README.md
+├─ src/ Aqr.Web (UI + API + SyncWorker host) · Aqr.Core (ARM clients, model, EF Core + migrations, sync, reports)
+├─ tests/Aqr.Tests           # unit, SQL-translation, web/auth, and SQL integration tests (Azure SQL Database container)
+├─ scripts/dev-sql.ps1       # local Azure SQL Database container, see docs/LOCAL_DEV.md
 ├─ catalog/vm-families.json
 └─ docs/
 ```
@@ -494,7 +495,10 @@ aqr/
 | `AQR_SQL_SKU` | `S1` | Database tier, §5.3 |
 | `AQR_HISTORY_RETENTION` | `1 YEAR` | Temporal history retention, §5.4 |
 | `AQR_SQL_PITR_DAYS` | `7` | Point-in-time restore window |
-| `AQR_SQL_ADMIN_GROUP_ID` | — | Entra admin group for the SQL server |
+| `AQR_SQL_ADMIN_OBJECT_IDS` | — | Extra object IDs added to the generated SQL admin group |
+| `AQR_GRANT_GRAPH_GROUPMEMBER_READ` | `false` | Grant the UAMI Graph `GroupMember.Read.All` for group-overage lookups (needs a privileged admin) |
+| `AQR_ASSIGN_MG_RBAC` | `false` | Let the postprovision hook run the MG Reader assignments |
+| `AQR_APP_SERVICE_SKU` | `P0v3` | App Service plan SKU |
 | `AQR_ADMIN_GROUP_ID` / `AQR_READER_GROUP_ID` | — | App role assignments |
 | `AQR_SYNC_INTERVAL` | `1h` | Sync cadence |
 | `AQR_REGIONS` | off | Optional region allow-list |
@@ -502,11 +506,9 @@ aqr/
 Hooks:
 - `preprovision` checks the deployer's az context against `AZURE_SUBSCRIPTION_ID` and fails on a
   mismatch.
-- `postprovision`:
-  - creates the UAMI's contained database user (`CREATE USER … FROM EXTERNAL PROVIDER`) with the
-    deployer's Entra token. The deployer must be in the SQL admin group;
-  - prints MG RBAC commands if they weren't applied;
-  - triggers the first sync.
+- `postprovision`: prints the Reader role-assignment command for each management group (runs them when
+  `AQR_ASSIGN_MG_RBAC=true` and the deployer has rights there), plus the `Microsoft.Quota` registration
+  reminder. The app runs its first sync on startup.
 
 The Entra app registration and FIC are created with the Microsoft Graph Bicep extension. If the
 deployer lacks Graph permissions, a hook script does it instead.

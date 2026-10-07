@@ -1,0 +1,26 @@
+name: aqr
+metadata:
+  template: aqr
+infra:
+  provider: bicep
+  path: infra
+services:
+  web:
+    project: src/Aqr.Web
+    language: dotnet
+    host: appservice
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: ./hooks/preprovision.ps1
+    posix:
+      shell: pwsh
+      run: ./hooks/preprovision.ps1
+  postprovision:
+    windows:
+      shell: pwsh
+      run: ./hooks/postprovision.ps1
+    posix:
+      shell: pwsh
+      run: ./hooks/postprovision.ps1

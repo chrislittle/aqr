@@ -1,0 +1,67 @@
+@page
+@model Aqr.Web.Pages.Admin.AccessModel
+@{
+    ViewData["Title"] = "Admin · report access";
+}
+<div class="pagehead">
+    <div><h1>Report access</h1><div class="sub">Who sees which subscriptions in AQR. This is <b>separate from Azure RBAC</b>: a grant here doesn't give access to Azure, and Azure access doesn't give access here. Readers with no grant see nothing. <a href="/Admin">← Sync health</a></div></div>
+</div>
+@if (Model.Message is not null) { <div class="callout" style="margin:0 0 16px">@Model.Message</div> }
+@if (!ViewData.ModelState.IsValid) { <div asp-validation-summary="All" class="callout warn" style="margin:0 0 16px"></div> }
+
+<div class="card">
+    <div class="ch"><h2>Add a grant</h2><span class="hint">management-group grants include subscriptions moved in later, automatically</span></div>
+    <form method="post" asp-page-handler="Add" class="cb">
+        <div class="formrow">
+            <label>Principal type <select asp-for="Input.PrincipalType"><option>Group</option><option>User</option></select></label>
+            <label>Entra object ID <input asp-for="Input.PrincipalObjectId" placeholder="00000000-0000-…" required /></label>
+            <label>Display name <input asp-for="Input.PrincipalDisplayName" placeholder="e.g. AI Platform team" /></label>
+            <label>Target type <select asp-for="Input.TargetType" id="tt" onchange="for (const s of document.querySelectorAll('[data-tt]')) { s.hidden = s.dataset.tt !== this.value; s.disabled = s.hidden; }">
+                <option value="ManagementGroup">Management group</option><option value="QuotaGroup">Quota group</option><option value="Subscription">Subscription</option></select></label>
+            <label>Target
+                <select name="Input.TargetId" data-tt="ManagementGroup">@foreach (var mg in Model.ManagementGroups) { <option>@mg</option> }</select>
+                <select name="Input.TargetId" data-tt="QuotaGroup" hidden disabled>@foreach (var (k, l) in Model.QuotaGroups) { <option value="@k">@l</option> }</select>
+                <select name="Input.TargetId" data-tt="Subscription" hidden disabled>@foreach (var (id, n) in Model.Subscriptions) { <option value="@id">@n</option> }</select>
+            </label>
+            <label>Note <input asp-for="Input.Note" placeholder="why / ticket" /></label>
+            <button class="btn primary" type="submit">Add grant</button>
+        </div>
+    </form>
+</div>
+
+<div class="grid">
+    <div class="card">
+        <div class="ch"><h2>Current grants</h2><span class="hint">@Model.Grants.Count</span></div>
+        <table>
+            <thead><tr><th>Principal</th><th>Target</th><th>Note</th><th>Last changed by</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var g in Model.Grants)
+            {
+                <tr>
+                    <td><b>@(g.PrincipalDisplayName.Length > 0 ? g.PrincipalDisplayName : g.PrincipalObjectId)</b><div class="note">@g.PrincipalType · @g.PrincipalObjectId</div></td>
+                    <td><span class="chip c-group">@g.TargetType</span> @g.TargetId</td>
+                    <td class="note">@g.Note</td>
+                    <td class="note">@g.ChangedBy</td>
+                    <td><form method="post" asp-page-handler="Delete" asp-route-id="@g.GrantId" class="inline" onsubmit="return confirm('Remove this grant?')"><button class="btn" type="submit">Remove</button></form></td>
+                </tr>
+            }
+            @if (Model.Grants.Count == 0) { <tr><td colspan="5" class="note" style="padding:20px">No grants yet. Only AQR.Admin users can see data.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+    <div class="card">
+        <div class="ch"><h2>Audit trail</h2><span class="hint">temporal history of access.Grant</span></div>
+        <div class="cb">
+            @foreach (var (g, from, to) in Model.History)
+            {
+                var current = to.Year >= 9999;
+                <div style="padding:6px 0;border-bottom:1px solid #f1f4f9;font-size:12.5px">
+                    <b>@from.ToString("yyyy-MM-dd HH:mm")</b> @(current ? "" : $"→ {to:yyyy-MM-dd HH:mm}")
+                    · @(g.PrincipalDisplayName.Length > 0 ? g.PrincipalDisplayName : g.PrincipalObjectId) → @g.TargetType @g.TargetId
+                    <div class="note">@g.ChangedBy @(current ? "(current)" : "(superseded or removed)")</div>
+                </div>
+            }
+            @if (Model.History.Count == 0) { <div class="note">No history yet (or in-memory dev database).</div> }
+        </div>
+    </div>
+</div>

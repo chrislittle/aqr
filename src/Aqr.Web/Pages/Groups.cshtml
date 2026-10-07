@@ -1,0 +1,105 @@
+@page
+@model GroupsModel
+@{
+    ViewData["Title"] = "Quota groups";
+    var d = Model.Data;
+    var sel = d.Selected;
+    var L = d.Rows.Sum(x => x.Quota.GroupLimit);
+    var A = d.Rows.Sum(x => x.Quota.AllocatedTotal);
+    var P = d.Rows.Sum(x => x.Quota.AvailableLimit);
+    var Us = d.Rows.Sum(x => x.Quota.GroupUsage ?? 0);
+    string[] palette = ["#2563eb", "#0d9488", "#d9822b", "#7c3aed", "#e0533d", "#0891b2", "#be185d", "#65a30d"];
+    var subs = d.Rows.SelectMany(x => x.Allocations).Select(a => a.SubscriptionId).Distinct().OrderBy(x => x).ToList();
+    string Color(string s) => s == "(other subscriptions)" ? "#94a3b8" : palette[subs.IndexOf(s) % palette.Length];
+    var names = d.Members.ToDictionary(m => m.SubscriptionId, m => m.Name);
+}
+<div class="pagehead">
+    <div><h1>Quota groups</h1><div class="sub">Group limit, unallocated pool and per-subscription allocations (<code>Microsoft.Quota/groupQuotas</code> · 2025-09-01)</div></div>
+    @if (sel is not null)
+    {
+        <form method="get" class="headtools">
+            <span class="pick">👥 <select name="group" onchange="this.form.submit()">@foreach (var g in d.Groups) { var k = g.ManagementGroupId + "/" + g.GroupName; <option value="@k" selected="@(g == sel)">@g.GroupName (@g.ManagementGroupId)</option> }</select></span>
+            <span class="pick">📍 <select name="region" onchange="this.form.submit()"><option value="*">All regions</option>@foreach (var r in d.Regions) { <option selected="@(r == Model.Region)">@r</option> }</select></span>
+        </form>
+    }
+</div>
+@if (sel is null)
+{
+    <div class="card"><div class="cb note">No quota groups are visible to you. Quota groups appear here when one of their member subscriptions is in your report scope.</div></div>
+    return;
+}
+<div class="kpis">
+    <div class="kpi b1"><div class="ic">🏦</div><div class="label">Group limit</div><div class="val">@U.N(L)</div><div class="note">@d.Rows.Count family × region limits</div></div>
+    <div class="kpi b2"><div class="ic">📤</div><div class="label">Allocated to subscriptions</div><div class="val">@U.N(A)</div><div class="note">@(L > 0 ? (100.0 * A / L).ToString("0") : "0")% of group limit</div></div>
+    <div class="kpi b4"><div class="ic">🧊</div><div class="label">Unallocated pool</div><div class="val">@U.N(P)</div><div class="note">availableLimit · not deployable until allocated</div></div>
+    <div class="kpi b3"><div class="ic">⚙️</div><div class="label">Usage across members</div><div class="val">@U.N(Us)</div><div class="note">@(A > 0 ? (100.0 * Us / A).ToString("0") : "0")% of allocated</div></div>
+</div>
+<div class="callout warn" style="margin:0 0 16px">Deployments are checked against the <b>subscription</b> quota, not the group. Unallocated pool vCPUs are <b>not deployable</b> until they're allocated to a member subscription. A group allocation doesn't grant regional or zonal access either; check the <a href="/Zones">Zones</a> page.</div>
+<div class="grid">
+    <div class="card">
+        <div class="ch"><h2>Group limits by VM family</h2><span class="hint">@(Model.Region is null or "*" ? "all regions" : Model.Region)</span></div>
+        <table>
+            <thead><tr><th>VM family</th><th>Region</th><th class="num">Group limit</th><th class="num">Allocated</th><th class="num">Unallocated</th><th class="num">Usage</th><th>Allocation by subscription</th></tr></thead>
+            <tbody>
+            @foreach (var row in d.Rows)
+            {
+                var q = row.Quota;
+                <tr>
+                    <td><div class="fam">@row.Series<small>@q.FamilyId</small></div></td>
+                    <td>@q.Region</td>
+                    <td class="num">@U.N(q.GroupLimit)</td>
+                    <td class="num">@U.N(q.AllocatedTotal)</td>
+                    <td class="num">@(q.AvailableLimit > 0 ? U.N(q.AvailableLimit) : "0")</td>
+                    <td class="num">@(q.GroupUsage is { } gu ? U.N(gu) : "—")</td>
+                    <td><div class="stack">
+                        @foreach (var a in row.Allocations.Where(a => a.QuotaAllocated > 0))
+                        {
+                            <i style="width:@((100.0 * a.QuotaAllocated / Math.Max(1, q.GroupLimit)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))%;background:@Color(a.SubscriptionId)" title="@(names.GetValueOrDefault(a.SubscriptionId, a.SubscriptionId)): @U.N(a.QuotaAllocated)"></i>
+                        }
+                        @if (q.AvailableLimit > 0) { <i class="unalloc" style="width:@((100.0 * q.AvailableLimit / Math.Max(1, q.GroupLimit)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))%" title="unallocated: @U.N(q.AvailableLimit)"></i> }
+                    </div></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        <div class="cb" style="display:flex;gap:14px;flex-wrap:wrap;border-top:1px solid var(--line)">
+            @foreach (var s in subs) { <span class="hbar" style="margin:0"><span style="width:12px;height:12px;border-radius:3px;background:@Color(s)"></span>@names.GetValueOrDefault(s, s)</span> }
+            <span class="hbar" style="margin:0"><span class="stack" style="min-width:24px;width:24px;height:12px"><i class="unalloc" style="width:100%"></i></span>unallocated</span>
+        </div>
+    </div>
+    <div>
+        <div class="card">
+            <div class="ch"><h2>Member subscriptions</h2><span class="hint">Management group: @sel.ManagementGroupId</span></div>
+            <table>
+                <thead><tr><th>Subscription</th><th class="num">Allocated</th><th class="num">Usage</th><th>Blocked families</th></tr></thead>
+                <tbody>
+                @foreach (var m in d.Members)
+                {
+                    <tr><td><b>@m.Name</b><div class="note">@m.SubscriptionId</div></td><td class="num">@U.N(m.Allocated)</td><td class="num">@U.N(m.Usage)</td>
+                        <td>@if (m.Blocked > 0) { <a class="badge crit" href="/Explorer?sub=@m.SubscriptionId&zstat=NoZones&zstat=RegionBlocked">@m.Blocked</a> } else { <span class="badge ok">0</span> }</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <div class="card">
+            <div class="ch"><h2>Zone mapping across members</h2><span class="hint">logical → physical</span></div>
+            <div class="cb">
+                @foreach (var reg in d.ZoneMappings.GroupBy(z => z.Region).OrderBy(g => g.Key))
+                {
+                    var bySub = reg.GroupBy(z => z.SubscriptionId).ToList();
+                    var differ = bySub.Select(g => string.Join(',', g.OrderBy(z => z.LogicalZone).Select(z => z.PhysicalZone))).Distinct().Count() > 1;
+                    <div style="margin-bottom:10px"><b>@reg.Key</b> @if (differ) { <span class="badge warnb">mappings differ</span> } else { <span class="badge ok">same</span> }
+                        <table style="margin-top:4px"><tbody>
+                        @foreach (var s in bySub)
+                        {
+                            <tr><td style="padding:4px 6px">@names.GetValueOrDefault(s.Key, s.Key)</td>
+                            @foreach (var z in s.OrderBy(z => z.LogicalZone)) { <td style="padding:4px 6px"><span class="z open">@z.LogicalZone</span> → <code>@z.PhysicalZone[(z.PhysicalZone.LastIndexOf('-') + 1)..]</code></td> }</tr>
+                        }
+                        </tbody></table>
+                    </div>
+                }
+                @if (d.ZoneMappings.Count == 0) { <div class="note">No zone mappings synced yet for these regions.</div> }
+            </div>
+        </div>
+    </div>
+</div>

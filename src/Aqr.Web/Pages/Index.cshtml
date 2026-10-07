@@ -1,0 +1,132 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Overview";
+    var d = Model.Data;
+    var regionalPct = d.RegionalLimit > 0 ? 100.0 * d.RegionalUsage / d.RegionalLimit : 0;
+    var regions = d.Heatmap.Select(h => h.Key).Distinct().OrderBy(x => x).ToList();
+    var cats = new[] { "GeneralPurpose", "ComputeOptimized", "MemoryOptimized", "StorageOptimized", "GpuAccelerated", "HighPerformanceCompute" }
+        .Where(c => d.Heatmap.Any(h => h.Key2 == c)).ToList();
+    var lastQuota = d.LastRuns.FirstOrDefault(r => r.Stage == SyncStages.SubQuota);
+}
+<div class="pagehead">
+    <div><h1>VM quota overview</h1><div class="sub">Regional vCPU quota, zonal SKU access and Quota Groups for the subscriptions you can see</div></div>
+    <div class="headtools">
+        <span class="scope"><span class="dot"></span>@(Model.Visibility.All ? "Scope: all subscriptions" : $"Scope: {Model.Visibility.SubscriptionIds.Count} subscriptions (admin-mapped)")</span>
+        <span class="pick" title="Quota sync">🕘 Quota synced @U.Ago(lastQuota?.EndedUtc)</span>
+        @if (Model.HistoryAvailable)
+        {
+            <form method="get" class="pick"><label>As of <input type="datetime-local" name="asOf" value="@Model.AsOf?.ToString("yyyy-MM-ddTHH:mm")" style="border:0;font-weight:600" /></label><button class="btn" type="submit">Go</button></form>
+        }
+    </div>
+</div>
+
+<div class="kpis">
+    <div class="kpi b1"><div class="ic">🧮</div><div class="label">Regional vCPU quota</div><div class="val">@U.N(d.RegionalLimit)</div><div class="note">@U.N(d.RegionalUsage) in use · @regionalPct.ToString("0")%</div></div>
+    <div class="kpi b5"><div class="ic">🔥</div><div class="label">Family quotas ≥ 80%</div><div class="val">@d.Hot</div><div class="note bad">@d.AtLimit at limit · of @U.N(d.FamilyQuotas) family quotas</div></div>
+    <div class="kpi b2"><div class="ic">👥</div><div class="label">Quota group pool</div><div class="val">@U.N(d.GroupPoolUnallocated)</div><div class="note">unallocated vCPUs · @d.GroupCount group(s) · not deployable until allocated</div></div>
+    <div class="kpi b4"><div class="ic">🚧</div><div class="label">Quota not deployable</div><div class="val">@d.NotDeployable</div><div class="note bad">@U.N(d.NotDeployableVcpu) vCPUs available but region/zone blocked · +@d.PartialZone partial-zone</div></div>
+</div>
+
+<div class="grid">
+    <div>
+        <div class="card">
+            <div class="ch"><h2>Most constrained family quotas</h2><span class="hint">regional quota, with zonal access alongside</span></div>
+            <table>
+                <thead><tr><th>VM family</th><th>Subscription</th><th>Region</th><th>Quota (regional)</th><th class="num">Util</th><th class="num">Available</th><th>Zones (logical)</th></tr></thead>
+                <tbody>
+                @foreach (var r in d.Top)
+                {
+                    <tr>
+                        <td><div class="fam">@r.Series</div><div>@U.FamilyChips(r)</div></td>
+                        <td>@r.SubscriptionName @if (r.QuotaGroup is not null) { <div><span class="chip c-group">@r.QuotaGroup</span></div> }</td>
+                        <td>@r.Region</td>
+                        <td>@U.Meter(r.Usage, r.Limit)</td>
+                        <td class="num">@U.Badge(r.UtilPct, r.Limit)</td>
+                        <td class="num">@U.N(r.Available)</td>
+                        <td>@U.ZonePills(r, false)</td>
+                    </tr>
+                }
+                @if (d.Top.Count == 0) { <tr><td colspan="7" class="note" style="padding:20px">No quota data yet.</td></tr> }
+                </tbody>
+            </table>
+            <div class="callout"><b>Reading the Zones column:</b> vCPU quota is <b>regional</b>. The pills show whether this subscription can deploy the family's SKUs in each zone
+                (<span class="z open">1</span> open · <span class="z restr">2</span> restricted for this subscription; zones not offered aren't shown). Numbers are <b>logical zones for that subscription</b>.</div>
+        </div>
+        <div class="card">
+            <div class="ch"><h2>Utilization heatmap — region × VM category</h2><span class="hint">family quota usage ÷ limit</span></div>
+            <div class="cb" style="overflow:auto">
+                <table class="heat">
+                    <thead><tr><th style="text-align:left">Region</th>@foreach (var c in cats) { <th>@U.Cat(c)</th> }</tr></thead>
+                    <tbody>
+                    @foreach (var reg in regions)
+                    {
+                        <tr><td class="rl">@reg</td>
+                        @foreach (var c in cats)
+                        {
+                            var h = d.Heatmap.FirstOrDefault(x => x.Key == reg && x.Key2 == c);
+                            if (h is null || h.Limit == 0) { <td><span class="muted">—</span></td> continue; }
+                            var p = h.UtilPct;
+                            var bg = p >= 90 ? "#fde8e8" : p >= 75 ? "#fdeede" : p >= 50 ? "#fff7e6" : p >= 25 ? "#e6f4ea" : "#f1f8f3";
+                            var fg = p >= 90 ? "#b42318" : p >= 75 ? "#b45309" : "#14532d";
+                            <td><a href="/Explorer?reg=@reg&cat=@c"><div class="hc" style="background:@bg;color:@fg" title="@U.N(h.Usage) / @U.N(h.Limit) vCPU">@p.ToString("0")%</div></a></td>
+                        }
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div>
+        <div class="card">
+            <div class="ch"><h2>vCPUs in use by CPU manufacturer</h2><span class="hint">family quotas</span></div>
+            <div class="cb" style="display:flex;gap:18px;align-items:center">
+                @Svg.Donut(d.ByCpu.Select(x => (U.CpuLabels.GetValueOrDefault(x.Key, x.Key), x.Usage, U.CpuColors.GetValueOrDefault(x.Key, "#94a3b8"))).ToList())
+                <div class="legend" style="flex:1">
+                    @foreach (var x in d.ByCpu)
+                    {
+                        <div class="row"><span class="sw" style="background:@U.CpuColors.GetValueOrDefault(x.Key, "#94a3b8")"></span>@U.CpuLabels.GetValueOrDefault(x.Key, x.Key)<span class="amt">@U.N(x.Usage)</span></div>
+                    }
+                    <div class="note">GPU families count by host CPU. Manufacturer from <a href="/Families">catalog/vm-families.json</a>.</div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="ch"><h2>Quota held but not deployable</h2><span class="hint">available &gt; 0 and region/zone restricted</span></div>
+            <div class="cb">
+                @foreach (var r in d.Blocked)
+                {
+                    <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid #f1f4f9">
+                        <div><b>@r.Series</b> · @r.Region<div class="note">@r.SubscriptionName · @U.N(r.Available) vCPU available</div></div>
+                        <div style="text-align:right">@U.ZonePills(r, false)</div>
+                    </div>
+                }
+                @if (d.Blocked.Count == 0) { <div class="note">Nothing blocked.</div> }
+                <div style="margin-top:8px"><a href="/Explorer?zstat=NoZones&zstat=RegionBlocked&minAvailable=1">Show all in the explorer →</a></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="ch"><h2>Regional vCPU totals</h2><span class="hint">“Total Regional vCPUs” (cores)</span></div>
+            <div class="cb">
+                @foreach (var x in d.ByRegion.Take(10))
+                {
+                    <div class="hbar"><span class="lbl">@x.Key</span><span class="trk"><i class="@U.FillClass(x.UtilPct)" style="width:@Math.Min(100, x.UtilPct).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></i></span><span class="v">@U.N(x.Usage)/@U.N(x.Limit)</span></div>
+                }
+            </div>
+        </div>
+        @if (d.Restricted.Count > 0)
+        {
+            <div class="card">
+                <div class="ch"><h2>Capacity-restricted series still holding quota</h2></div>
+                <div class="cb">
+                    @foreach (var x in d.Restricted)
+                    {
+                        <div class="hbar"><span class="lbl"><b>@x.Key</b> <span class="note">@x.Count quotas</span></span><span class="trk"><i class="f-warn" style="width:@Math.Min(100, x.UtilPct).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></i></span><span class="v">@U.N(x.Usage)/@U.N(x.Limit)</span></div>
+                    }
+                    <div class="note" style="margin-top:8px">Additional quota for these series isn't approved, and new subscriptions can't deploy them (<a href="@U.CapacityRestrictedUrl" target="_blank" rel="noopener">Microsoft Learn</a>).</div>
+                </div>
+            </div>
+        }
+    </div>
+</div>

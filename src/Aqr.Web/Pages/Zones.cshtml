@@ -1,0 +1,71 @@
+@page
+@model ZonesModel
+@{
+    ViewData["Title"] = "Zones & SKU access";
+    var d = Model.Data;
+    var physical = Model.Physical;
+    var region = d.Region?.Name ?? d.Regions.FirstOrDefault();
+}
+<div class="pagehead">
+    <div><h1>Zones &amp; SKU access</h1><div class="sub">For one family in one region: where each subscription can deploy, from the Compute Resource SKUs API. Quota is regional; access is per zone and per subscription.</div></div>
+    <form method="get" class="headtools">
+        <span class="pick">📍 <select name="region" onchange="this.form.submit()">@foreach (var r in d.Regions) { <option selected="@(r == region)">@r</option> }</select></span>
+        <span class="pick">🧩 <select name="family" onchange="this.form.submit()">@foreach (var fo in d.Families) { <option value="@fo.FamilyId" selected="@(fo.FamilyId == d.Family?.FamilyId)">@fo.Series</option> }</select></span>
+        <span class="seg">
+            <a href="?region=@region&family=@d.Family?.FamilyId"><button type="button" class="@(physical ? "" : "on")">Logical</button></a>
+            <a href="?region=@region&family=@d.Family?.FamilyId&zoneMode=physical"><button type="button" class="@(physical ? "on" : "")">Physical</button></a>
+        </span>
+    </form>
+</div>
+@if (d.Rows.Count == 0)
+{
+    <div class="card"><div class="cb note">No quota data for the selected region and family in your scope.</div></div>
+    return;
+}
+<div class="grid">
+    <div class="card">
+        <div class="ch"><h2>@(d.Family?.Series ?? "") · @region</h2><span class="hint">@d.Rows.Count subscription(s) · @(d.Region?.HasZones == true ? "zonal region" : "no availability zones")</span></div>
+        <table>
+            <thead><tr><th>Subscription</th><th>Quota (regional)</th><th>Zone access (@(physical ? "physical" : "logical"))</th><th class="num">SKUs open in region</th><th>Restricted SKUs</th></tr></thead>
+            <tbody>
+            @foreach (var row in d.Rows)
+            {
+                <tr>
+                    <td><b>@row.Subscription.Name</b><div class="note">@row.Subscription.SubscriptionId</div></td>
+                    <td>@if (row.Quota is not null) { @U.Meter(row.Quota.Usage, row.Quota.Limit) }</td>
+                    <td>@U.ZonePills(row.Access, physical)</td>
+                    <td class="num">@(row.Access is null ? "—" : $"{row.Access.SkusRegionOpen} / {row.Access.SkusTotal}")</td>
+                    <td>
+                        @foreach (var s in row.Restrictions)
+                        {
+                            <div style="font-size:12px;padding:2px 0"><code>@s.Sku</code>
+                                @if (s.RestrictionType == "Location") { <span class="blocked">region</span> }
+                                else { <span class="zstat">zones @(physical ? s.ZonesPhysical : s.ZonesLogical)</span> }
+                                <span class="note">@s.ReasonCode</span></div>
+                        }
+                        @if (row.Restrictions.Count == 0 && row.Access is not null) { <span class="note">none</span> }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        <div class="callout">Regional vCPU quota applies to the whole region. A zone is <b>open</b> only if the SKU is offered there <b>and</b> isn't restricted for the subscription.
+            In <b>physical</b> mode zones are datacenter IDs (e.g. <code>@(region)-az1</code>), so subscriptions with different logical mappings line up. Only restricted SKUs are listed individually.</div>
+    </div>
+    <div class="card">
+        <div class="ch"><h2>Logical → physical zone mapping</h2></div>
+        <div class="cb">
+            @if (d.Region?.HasZones != true) { <div class="note">This region has no availability zones; only regional (non-zonal) deployments are possible.</div> }
+            else
+            {
+                <table><thead><tr><th>Subscription</th><th>Logical 1</th><th>Logical 2</th><th>Logical 3</th></tr></thead><tbody>
+                @foreach (var row in d.Rows)
+                {
+                    <tr><td>@row.Subscription.Name</td>@foreach (var l in new[] { "1", "2", "3" }) { <td><code>@(row.Mapping.FirstOrDefault(m => m.LogicalZone == l)?.PhysicalZone ?? "—")</code></td> }</tr>
+                }
+                </tbody></table>
+                <div class="note" style="margin-top:8px">Source: <code>GET /subscriptions/{id}/locations</code> → <code>availabilityZoneMappings</code>.</div>
+            }
+        </div>
+    </div>
+</div>

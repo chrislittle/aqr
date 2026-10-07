@@ -1,0 +1,9 @@
+@page
+@model ErrorModel
+@{
+    ViewData["Title"] = "Error";
+}
+<div class="card" style="max-width:720px;margin:40px auto">
+    <div class="ch"><h2>Something went wrong</h2></div>
+    <div class="cb"><p>The request failed. If this keeps happening, give an AQR admin this request ID:</p><code>@Model.RequestId</code></div>
+</div>

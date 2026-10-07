@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Aqr.Core/Aqr.Core.csproj" />
+    <Project Path="src/Aqr.Web/Aqr.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Aqr.Tests/Aqr.Tests.csproj" />
+  </Folder>
+</Solution>

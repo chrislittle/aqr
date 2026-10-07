@@ -1,0 +1,48 @@
+@page
+@model TrendsModel
+@{
+    ViewData["Title"] = "Trends";
+    var t = Model.Trend;
+    var changes = new List<(DateTime At, long From, long To)>();
+    if (t is not null)
+        for (var i = 1; i < t.Points.Count; i++)
+            if (t.Points[i].Limit != t.Points[i - 1].Limit) changes.Add((t.Points[i].From, t.Points[i - 1].Limit, t.Points[i].Limit));
+    var current = $"{Model.Sub}|{Model.Region}|{Model.Quota}";
+}
+<div class="pagehead">
+    <div><h1>Trends</h1><div class="sub">Usage and limit over time from the temporal history (1-year retention). A new point exists only where a value changed.</div></div>
+    <form method="get" class="headtools" id="tf">
+        <input type="hidden" name="sub" value="@Model.Sub" /><input type="hidden" name="region" value="@Model.Region" /><input type="hidden" name="quota" value="@Model.Quota" />
+        <span class="pick">🧩 <select onchange="const [s,r,q]=this.value.split('|');const f=document.getElementById('tf');f.sub.value=s;f.region.value=r;f.quota.value=q;f.submit()">
+            @if (Model.Candidates.All(c => Model.Key(c.SubscriptionId, c.Region, c.QuotaName) != current) && t?.Current is not null) { <option selected>@t.Series · @Model.Region · @t.SubscriptionName</option> }
+            @foreach (var c in Model.Candidates) { var k = Model.Key(c.SubscriptionId, c.Region, c.QuotaName); <option value="@k" selected="@(k == current)">@c.Series · @c.Region · @c.SubscriptionName (@c.UtilPct.ToString("0")%)</option> }
+        </select></span>
+        <span class="seg">@foreach (var d in new[] { 7, 30, 90, 365 }) { <button type="submit" name="days" value="@d" class="@(Model.Days == d ? "on" : "")">@(d == 365 ? "1y" : d + "d")</button> }</span>
+    </form>
+</div>
+@if (t is null || t.Current is null && t.Points.Count == 0)
+{
+    <div class="card"><div class="cb note">Pick a quota from the list, or open one from the explorer's 📈 link.</div></div>
+    return;
+}
+<div class="grid">
+    <div class="card">
+        <div class="ch"><h2>@t.Series · @Model.Region · @t.SubscriptionName</h2><span class="hint">usage · limit (regional)</span></div>
+        <div class="cb">
+            @Svg.StepChart(t.Points, Model.From, Model.To)
+            <div class="legend" style="flex-direction:row;gap:18px;margin-top:6px"><div class="row"><span class="sw" style="background:#2563eb"></span>usage</div><div class="row"><span class="sw" style="background:#d93025"></span>subscription limit (regional)</div></div>
+            @if (!t.HistoryAvailable) { <div class="note" style="margin-top:8px">History needs Azure SQL (temporal tables); the in-memory dev database only has current values.</div> }
+        </div>
+    </div>
+    <div class="card">
+        <div class="ch"><h2>Limit changes</h2><span class="hint">detected from history</span></div>
+        <div class="cb">
+            @foreach (var c in changes.AsEnumerable().Reverse())
+            {
+                var delta = c.To - c.From;
+                <div style="padding:8px 0;border-bottom:1px solid #f1f4f9"><b>@c.At.ToString("yyyy-MM-dd HH:mm")</b> · limit @U.N(c.From) → <b>@U.N(c.To)</b> <span class="badge @(delta >= 0 ? "ok" : "crit")">@(delta >= 0 ? "+" : "")@U.N(delta)</span></div>
+            }
+            @if (changes.Count == 0) { <div class="note">No limit changes in range.</div> }
+        </div>
+    </div>
+</div>

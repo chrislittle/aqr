@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "location": { "value": "${AZURE_LOCATION}" },
+    "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
+    "managementGroupIds": { "value": "${AQR_MANAGEMENT_GROUP_IDS=}" },
+    "regions": { "value": "${AQR_REGIONS=}" },
+    "sqlNetwork": { "value": "${AQR_SQL_NETWORK=nsp}" },
+    "nspMode": { "value": "${AQR_NSP_MODE=Learning}" },
+    "sqlSku": { "value": "${AQR_SQL_SKU=S1}" },
+    "sqlPitrDays": { "value": "${AQR_SQL_PITR_DAYS=7}" },
+    "historyRetention": { "value": "${AQR_HISTORY_RETENTION=1 YEAR}" },
+    "sqlAdminObjectIds": { "value": "${AQR_SQL_ADMIN_OBJECT_IDS=}" },
+    "adminGroupId": { "value": "${AQR_ADMIN_GROUP_ID=}" },
+    "readerGroupId": { "value": "${AQR_READER_GROUP_ID=}" },
+    "grantGraphGroupMemberRead": { "value": "${AQR_GRANT_GRAPH_GROUPMEMBER_READ=false}" },
+    "appServiceSku": { "value": "${AQR_APP_SERVICE_SKU=P0v3}" }
+  }
+}

@@ -1,0 +1,36 @@
+@page
+@model FamiliesModel
+@{
+    ViewData["Title"] = "VM families";
+}
+<div class="pagehead">
+    <div><h1>VM family catalog</h1><div class="sub">Attributes from the Resource SKUs API plus <code>catalog/vm-families.json</code> (CPU and GPU manufacturer, lifecycle). Every catalog row cites its Microsoft Learn page; anything else is <b>derived</b> from the <a href="@Model.Catalog.NamingSource" target="_blank" rel="noopener">VM naming convention</a>.</div></div>
+</div>
+<div class="card">
+    <table>
+        <thead><tr><th>Series</th><th>Quota name</th><th>Category</th><th>CPU</th><th>Arch</th><th>Accelerator</th><th>Gen</th><th>Features</th><th>Lifecycle</th><th class="num">SKUs</th><th class="num">vCPU range</th><th class="num">Quotas held</th><th class="num">Total limit</th><th>Source</th></tr></thead>
+        <tbody>
+        @foreach (var r in Model.Rows)
+        {
+            var f = r.Family;
+            <tr>
+                <td class="fam">@f.Series</td>
+                <td><code>@f.QuotaName</code></td>
+                <td>@U.Cat(f.Category)</td>
+                <td>@U.FamilyChips(f.CpuManufacturer, "", "None", "", "", "", "", "")</td>
+                <td>@f.Architecture</td>
+                <td>@(f.AcceleratorType == "None" ? "—" : $"{f.AcceleratorVendor} {f.AcceleratorModel}".Trim() is { Length: > 0 } a ? a : f.AcceleratorType)</td>
+                <td>@f.Generation</td>
+                <td>@foreach (var x in U.Split(f.Features)) { <span class="chip c-feat">@U.FeatureLabels.GetValueOrDefault(x, x)</span> }</td>
+                <td>@if (f.Lifecycle == "Capacity-restricted") { <a class="badge warnb" href="@U.CapacityRestrictedUrl" target="_blank" rel="noopener">capacity-restricted</a> } else if (f.Lifecycle == "Current") { <span class="badge ok">current</span> } else { <span class="badge neutral">@f.Lifecycle</span> }</td>
+                <td class="num">@(f.SkuCount > 0 ? f.SkuCount : "—")</td>
+                <td class="num">@(f.MaxVcpu > 0 ? $"{f.MinVcpu}–{f.MaxVcpu}" : "—")</td>
+                <td class="num">@r.QuotasHeld</td>
+                <td class="num">@U.N(r.TotalLimit)</td>
+                <td><a href="@f.SourceUrl" target="_blank" rel="noopener">@(f.Classification == "Catalog" ? "Learn ↗" : "naming ↗")</a></td>
+            </tr>
+        }
+        @if (Model.Rows.Count == 0) { <tr><td colspan="14" class="note" style="padding:20px">No families synced yet.</td></tr> }
+        </tbody>
+    </table>
+</div>

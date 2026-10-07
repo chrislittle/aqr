@@ -1,0 +1,63 @@
+@page
+@model Aqr.Web.Pages.Admin.IndexModel
+@{
+    ViewData["Title"] = "Admin · sync health";
+    var latest = Model.Runs.GroupBy(r => r.Stage).Select(g => g.First()).ToList();
+    var quota = latest.FirstOrDefault(r => r.Stage == SyncStages.SubQuota);
+    var warnings = latest.Count(r => r.Status is "Warning" or "Failed");
+    var o = Model.Options;
+}
+<div class="pagehead">
+    <div><h1>Admin · sync health</h1><div class="sub">Each stage records coverage; anything under 100% is a warning, never a silent success. <a href="/Admin/Access">Manage report access →</a></div></div>
+    <form method="post" asp-page-handler="Sync" class="headtools"><button class="btn primary" type="submit">⟳ Run sync now</button></form>
+</div>
+@if (Model.Message is not null) { <div class="callout" style="margin:0 0 16px">@Model.Message</div> }
+<div class="kpis">
+    <div class="kpi b3"><div class="ic">✅</div><div class="label">Last quota sync</div><div class="val">@(quota?.EndedUtc?.ToString("HH:mm") ?? "—") UTC</div><div class="note">@U.Ago(quota?.EndedUtc) · @(quota?.Status ?? "never run")</div></div>
+    <div class="kpi b1"><div class="ic">🧾</div><div class="label">Subscriptions covered</div><div class="val">@(quota is null ? "—" : $"{quota.SubsCovered} / {quota.SubsExpected}")</div><div class="note">latest SubQuota stage</div></div>
+    <div class="kpi b4"><div class="ic">⚠️</div><div class="label">Stages needing attention</div><div class="val">@warnings</div><div class="note">latest run of each stage</div></div>
+    <div class="kpi b2"><div class="ic">💾</div><div class="label">Database</div><div class="val">@(Model.Db.Ready ? "Ready" : "Starting")</div><div class="note">@(Model.HistoryAvailable ? "Azure SQL · temporal history on" : "in-memory (dev)") @Model.Db.LastError</div></div>
+</div>
+<div class="grid">
+    <div class="card">
+        <div class="ch"><h2>Recent sync runs</h2><span class="hint">sync.Run</span></div>
+        <table>
+            <thead><tr><th>Start (UTC)</th><th>Stage</th><th>Trigger</th><th>Coverage</th><th class="num">Keys seen</th><th class="num">+ / ~ / −</th><th class="num">429s</th><th>Status</th></tr></thead>
+            <tbody>
+            @foreach (var r in Model.Runs)
+            {
+                <tr title="@r.Message">
+                    <td>@r.StartedUtc.ToString("MM-dd HH:mm")</td><td><b>@r.Stage</b></td><td>@r.Trigger</td>
+                    <td>@(r.SubsExpected > 0 ? $"{r.SubsCovered}/{r.SubsExpected}" : "—")</td>
+                    <td class="num">@U.N(r.KeysSeen)</td><td class="num">@r.Inserted / @r.Updated / @r.Deleted</td><td class="num">@r.Throttled</td>
+                    <td>@U.StatusBadge(r.Status) @if (r.Message.Length > 0) { <div class="note">@(r.Message.Length > 140 ? r.Message[..140] + "…" : r.Message)</div> }</td>
+                </tr>
+            }
+            @if (Model.Runs.Count == 0) { <tr><td colspan="8" class="note" style="padding:20px">No runs yet.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+    <div>
+        <div class="card">
+            <div class="ch"><h2>Coverage gaps</h2><span class="hint">latest run per stage</span></div>
+            <div class="cb">
+                @foreach (var g in Model.Gaps)
+                {
+                    <div style="padding:6px 0;border-bottom:1px solid #f1f4f9"><span class="badge warnb">@g.Stage</span> <b>@g.SubscriptionId</b>: @g.Status<div class="note">@g.Error</div></div>
+                }
+                @if (Model.Gaps.Count == 0) { <div class="note">No gaps in the latest runs.</div> }
+            </div>
+        </div>
+        <div class="card">
+            <div class="ch"><h2>Configuration</h2></div>
+            <div class="cb"><div class="kv">
+                <div>Management groups</div><div>@(o.ManagementGroupIdList.Count > 0 ? string.Join(", ", o.ManagementGroupIdList) : "— not set —")</div>
+                <div>Region scope</div><div>@(o.RegionList.Count > 0 ? string.Join(", ", o.RegionList) : "all regions returned by the APIs (write-on-change)")</div>
+                <div>Sync interval</div><div>quota @o.Sync.QuotaInterval · groups @o.Sync.GroupInterval · zones @o.Sync.ZoneInterval</div>
+                <div>History retention</div><div>@o.HistoryRetention (temporal tables)</div>
+                <div>Data source</div><div>@(o.UseMock ? "synthetic (mock)" : "Azure Resource Manager APIs")</div>
+                <div>Raw archive</div><div>@(string.IsNullOrEmpty(o.RawArchive.BlobServiceUri) ? "off" : o.RawArchive.BlobServiceUri + o.RawArchive.Container)</div>
+            </div></div>
+        </div>
+    </div>
+</div>

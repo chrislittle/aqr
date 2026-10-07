@@ -1,0 +1,124 @@
+@page
+@model ExplorerModel
+@{
+    ViewData["Title"] = "Quota explorer";
+    var f = Model.Filter;
+    var r = Model.Result;
+    var o = Model.Options;
+    var physical = f.IsPhysical;
+    var isFam = f.Kind == QuotaKinds.Family;
+    var qs = f.ToQueryString();
+    var pages = (int)Math.Ceiling(r.Total / (double)f.PageSize);
+    string SortLink(string key) => "?" + f.ToQueryString(("sort", key), ("dir", f.Sort == key && f.Descending ? "asc" : null), ("page", null));
+    string Arrow(string key) => f.Sort == key ? (f.Descending ? " ▼" : " ▲") : "";
+
+    void Chips(string key, IEnumerable<(string Value, string Label)> opts)
+    {
+        foreach (var (v, l) in opts)
+        {
+            <label><input type="checkbox" name="@key" value="@v" checked="@Model.On(key, v)" />@l</label>
+        }
+    }
+}
+<div class="pagehead">
+    <div><h1>Quota explorer</h1><div class="sub">Every subscription × region × VM family quota, with zonal SKU access. Every filter maps 1:1 to <code>/api/v1/quota/subscriptions</code>.</div></div>
+    <div class="headtools">
+        <span class="note">Zone numbering</span>
+        <span class="seg">
+            <a class="@(physical ? "" : "on")" href="?@f.ToQueryString(("zoneMode", null))"><button type="button" class="@(physical ? "" : "on")">Logical (per sub)</button></a>
+            <a href="?@f.ToQueryString(("zoneMode", "physical"))"><button type="button" class="@(physical ? "on" : "")">Physical</button></a>
+        </span>
+        <a class="btn" href="/api/v1/quota/subscriptions?@f.ToQueryString(("format", "csv"))">⬇ Export CSV</a>
+    </div>
+</div>
+
+<div class="explorer">
+    <form method="get" class="card fpanel" id="filters">
+        <input type="hidden" name="zoneMode" value="@f.ZoneMode" />
+        @if (f.AsOf is not null) { <input type="hidden" name="asOf" value="@f.AsOf.Value.ToString("yyyy-MM-ddTHH:mm:ssZ")" /> }
+        <div class="grp"><div class="gt">Search</div><input type="search" name="q" value="@f.Search" placeholder="family, series, subscription, region…" /></div>
+        <div class="grp"><div class="gt">Quota type</div>
+            <select name="kind"><option value="Family" selected="@(isFam)">VM family</option><option value="RegionalTotal" selected="@(!isFam)">Total regional vCPUs</option></select>
+        </div>
+        <div class="grp"><div class="gt">Subscription <a href="?@f.ToQueryString(("sub", null))">clear</a></div><div class="checks">@{ Chips("sub", o.Subscriptions.Select(s => (s.Id, s.Name))); }</div></div>
+        @if (o.Groups.Count > 0)
+        {
+            <div class="grp"><div class="gt">Quota group <a href="?@f.ToQueryString(("group", null))">clear</a></div><div class="checks">@{ Chips("group", o.Groups.Select(g => (g, g)).Append(("(none)", "not in a group"))); }</div></div>
+        }
+        @if (o.Geographies.Count > 0)
+        {
+            <div class="grp"><div class="gt">Geography <a href="?@f.ToQueryString(("geo", null))">clear</a></div><div class="checks">@{ Chips("geo", o.Geographies.Select(g => (g, g))); }</div></div>
+        }
+        <div class="grp"><div class="gt">Region <a href="?@f.ToQueryString(("reg", null))">clear</a></div><div class="checks">@{ Chips("reg", o.Regions.Select(x => (x, x))); }</div></div>
+        <div class="grp"><div class="gt">Zone access <a href="?@f.ToQueryString(("zstat", null))">clear</a></div><div class="checks">@{ Chips("zstat", new[] { ("AllZones", "All zones open"), ("PartialZones", "Partial zones"), ("NoZones", "No zones open"), ("RegionBlocked", "Region blocked"), ("Regional", "Regional (no AZ)") }); }</div></div>
+        <div class="grp"><div class="gt">Must be open in zone <span class="hint">@(physical ? "(physical)" : "(logical, per sub)")</span></div><div class="checks">@{ Chips("zopen", physical ? new[] { ("az1", "az1"), ("az2", "az2"), ("az3", "az3") } : new[] { ("1", "Zone 1"), ("2", "Zone 2"), ("3", "Zone 3") }); }</div></div>
+        <div class="grp"><div class="gt">VM category <a href="?@f.ToQueryString(("cat", null))">clear</a></div><div class="checks">@{ Chips("cat", o.Categories.Select(c => (c, U.Cat(c)))); }</div></div>
+        <div class="grp"><div class="gt">CPU manufacturer <a href="?@f.ToQueryString(("cpu", null))">clear</a></div><div class="checks">@{ Chips("cpu", o.CpuManufacturers.Select(c => (c, U.CpuLabels.GetValueOrDefault(c, c)))); }</div></div>
+        <div class="grp"><div class="gt">Architecture</div><div class="checks">@{ Chips("arch", o.Architectures.Select(c => (c, c))); }</div></div>
+        <div class="grp"><div class="gt">Accelerator</div><div class="checks">@{ Chips("acc", o.Accelerators.Select(c => (c, c))); }</div></div>
+        @if (o.GpuModels.Count > 0)
+        {
+            <div class="grp"><div class="gt">GPU model <a href="?@f.ToQueryString(("gpu", null))">clear</a></div><div class="checks">@{ Chips("gpu", o.GpuModels.Select(c => (c, c))); }</div></div>
+        }
+        <div class="grp"><div class="gt">Generation</div><div class="checks">@{ Chips("gen", o.Generations.Select(c => (c, c))); }</div></div>
+        <div class="grp"><div class="gt">Features (all of)</div><div class="checks">@{ Chips("feat", o.Features.Select(c => (c, U.FeatureLabels.GetValueOrDefault(c, c)))); }</div></div>
+        <div class="grp"><div class="gt">Lifecycle</div><div class="checks">@{ Chips("life", o.Lifecycles.Select(c => (c, c))); }</div></div>
+        <div class="grp"><div class="gt">Utilization ≥ <b id="ul">@f.MinUtil%</b></div><input type="range" name="minUtil" min="0" max="100" step="5" value="@f.MinUtil" oninput="document.getElementById('ul').textContent=this.value+'%'" /></div>
+        <div class="grp"><div class="gt">Available vCPUs ≥</div><input type="search" name="minAvailable" value="@(f.MinAvailable > 0 ? f.MinAvailable : null)" placeholder="e.g. 96" inputmode="numeric" /></div>
+        <div class="grp" style="display:flex;gap:8px"><button class="btn primary" type="submit">Apply</button><a class="btn" href="/Explorer">Reset</a></div>
+    </form>
+
+    <div>
+        <div class="card">
+            <div class="resultsbar">
+                <div><b>@U.N(r.Total)</b> quotas · <b>@U.N(r.TotalUsage)</b> / @U.N(r.TotalLimit) vCPU in use (@(r.TotalLimit > 0 ? (100.0 * r.TotalUsage / r.TotalLimit).ToString("0") : "0")%) · <b>@U.N(Math.Max(0, r.TotalLimit - r.TotalUsage))</b> available
+                    @if (isFam) { <text> · </text><span style="color:#b42318;font-weight:700">@r.NotDeployable not deployable</span> }</div>
+                <div class="note">@(physical ? "Physical zones (datacenter IDs): comparable across subscriptions." : "Logical zone numbers are per subscription; switch to Physical to compare across subscriptions.")</div>
+            </div>
+            <div class="apiline">GET /api/v1/quota/subscriptions?@qs</div>
+            <div class="scroll">
+                <table>
+                    <thead><tr>
+                        <th class="sort"><a href="@SortLink("family")">@((isFam ? "VM family" : "Quota") + Arrow("family"))</a></th>
+                        <th class="sort"><a href="@SortLink("sub")">@("Subscription" + Arrow("sub"))</a></th>
+                        <th class="sort"><a href="@SortLink("region")">@("Region" + Arrow("region"))</a></th>
+                        <th class="sort"><a href="@SortLink("limit")">@("Quota (regional)" + Arrow("limit"))</a></th>
+                        <th class="sort num"><a href="@SortLink("util")">@("Util" + Arrow("util"))</a></th>
+                        <th class="sort num"><a href="@SortLink("available")">@("Available" + Arrow("available"))</a></th>
+                        @if (isFam) { <th>Zones (@f.ZoneMode)</th> }
+                        <th></th>
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var x in r.Rows)
+                    {
+                        <tr>
+                            <td>@if (isFam) { <div class="fam">@x.Series<small>@x.QuotaName</small></div><div>@U.FamilyChips(x)</div> } else { <div class="fam">@x.LocalizedName<small>@x.QuotaName</small></div> }</td>
+                            <td>@x.SubscriptionName @if (x.QuotaGroup is not null) { <div><span class="chip c-group">@x.QuotaGroup</span></div> }</td>
+                            <td>@x.Region @if (!x.RegionHasZones) { <div><span class="regional">no AZ</span></div> }</td>
+                            <td>@U.Meter(x.Usage, x.Limit)</td>
+                            <td class="num">@U.Badge(x.UtilPct, x.Limit)</td>
+                            <td class="num">@U.N(x.Available)</td>
+                            @if (isFam) { <td>@U.ZonePills(x, physical)</td> }
+                            <td><a href="/Trends?sub=@x.SubscriptionId&region=@x.Region&quota=@x.QuotaName" title="History">📈</a></td>
+                        </tr>
+                    }
+                    @if (r.Rows.Count == 0) { <tr><td colspan="8" class="note" style="padding:24px;text-align:center">No quotas match these filters.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+            @if (pages > 1)
+            {
+                <div class="resultsbar">
+                    <span>Page @f.Page of @pages</span>
+                    <span>
+                        @if (f.Page > 1) { <a class="btn" href="?@f.ToQueryString(("page", (f.Page - 1).ToString()))">← Previous</a> }
+                        @if (f.Page < pages) { <a class="btn" href="?@f.ToQueryString(("page", (f.Page + 1).ToString()))">Next →</a> }
+                    </span>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+@section Scripts {
+    <script src="~/js/site.js" asp-append-version="true"></script>
+}
