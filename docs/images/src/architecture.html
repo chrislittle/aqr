@@ -52,17 +52,17 @@
       <div class="card-body">App registration + Easy Auth · app roles <code>AQR.Reader</code> / <code>AQR.Admin</code> · <b>secretless</b> (managed identity federated credential)</div></div>
     <div class="arrow">▼&nbsp; token</div>
     <div class="card blue"><div class="card-title">App Service · .NET 10</div>
-      <div class="card-body">Razor Pages UI + <code>/api/v1</code> (OpenAPI) · filters → parameterised KQL · result cache keyed by SnapshotId</div></div>
+      <div class="card-body">Razor Pages UI + <code>/api/v1</code> (OpenAPI) · filters → parameterised SQL · report visibility applied server-side (admin-mapped, not Azure RBAC)</div></div>
     <div class="arrow">▼&nbsp; reads only — <b>&nbsp;never&nbsp;</b> calls ARM on a page view</div>
-    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER · ENFORCED</span>
-      <div class="card green"><div class="card-title">Log Analytics workspace</div>
-        <div class="card-body">AQRSubQuota · AQRGroupQuota · AQRGroupAlloc · AQRFamilyZone · AQRSkuRestriction · AQRZoneMap · AQRFamily · AQRSyncRun</div></div>
+    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER (SQL: PREVIEW) · or PRIVATE ENDPOINT</span>
+      <div class="card green"><div class="card-title">Azure SQL Database · temporal tables</div>
+        <div class="card-body">current state + 1-year history (<code>FOR SYSTEM_TIME AS OF</code>) · quota · zone · dim · access grants (audited) · sync runs</div></div>
     </div>
   </div>
 
   <div>
     <div class="head"><span class="head-title">Data path</span><span class="pill purple">background · hourly / 4h / daily</span></div>
-    <div class="box"><div class="box-title">SyncWorker (BackgroundService)</div><div class="box-sub">single leader via blob lease · user-assigned managed identity · Reader on MGs</div></div>
+    <div class="box"><div class="box-title">SyncWorker (BackgroundService)</div><div class="box-sub">single writer via SQL app lock · user-assigned managed identity · Reader on MGs</div></div>
     <div class="arrow">▼&nbsp; ARM APIs only — retry, Retry-After, bounded parallelism</div>
     <div class="src">
       <div class="card purple"><div class="card-title">Resource Graph</div><div class="card-body"><code>QuotaResources</code> — sub × region × family usage/limit (hourly)</div></div>
@@ -70,10 +70,10 @@
       <div class="card purple"><div class="card-title">Compute Resource SKUs</div><div class="card-body">SKU→family, vCPU, GPU, arch · <b>region &amp; zone restrictions per sub</b> (daily)</div></div>
       <div class="card purple"><div class="card-title">Subscriptions · Locations</div><div class="card-body"><code>availabilityZoneMappings</code> logical ↔ physical zones (daily)</div></div>
     </div>
-    <div class="arrow">▼&nbsp; Logs Ingestion API (DCE + DCR) — typed rows</div>
-    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER · ENFORCED</span>
-      <div class="card green"><div class="card-title">DCE / DCR → Log Analytics</div><div class="card-body">same tables the UI reads · append-only snapshots · per-table retention</div></div>
-      <div class="card green"><div class="card-title">Storage account</div><div class="card-body">blob lease · raw API archive (gzip, lifecycle-expired) · sync watermarks</div></div>
+    <div class="arrow">▼&nbsp; bulk load + MERGE — only changed rows are updated; SQL writes history</div>
+    <div class="nsp"><span class="nsp-label">🛡 NETWORK SECURITY PERIMETER · or PRIVATE ENDPOINT</span>
+      <div class="card green"><div class="card-title">Azure SQL Database</div><div class="card-body">same tables the UI reads · <code>HISTORY_RETENTION_PERIOD = 1 YEAR</code> · Entra-only auth</div></div>
+      <div class="card green"><div class="card-title">Storage account</div><div class="card-body">raw API archive (gzip, lifecycle-expired) for audit and replay</div></div>
     </div>
   </div>
 </div>
@@ -88,9 +88,9 @@
 </div>
 
 <div class="cards3">
-  <div class="fcard"><div class="fcard-title">🔐&nbsp; Identity — no secrets</div><div class="fcard-body">One UAMI: Reader on management groups, Monitoring Metrics Publisher on DCR, Log Analytics Reader, Storage Blob Data Contributor. Shared keys disabled. No Key Vault needed in v1.</div></div>
-  <div class="fcard"><div class="fcard-title">🛡&nbsp; Network Security Perimeter</div><div class="fcard-body">Workspace, DCE and storage associated (all NSP <b>GA</b>). Inbound rule: managed identities from the AQR subscription only. Transition → Enforced.</div></div>
-  <div class="fcard"><div class="fcard-title">🚀&nbsp; <code>azd up</code></div><div class="fcard-body">Bicep provisions RG, App Service, UAMI, workspace + tables + DCR/DCE, storage, NSP, App Insights, Entra app. Hooks check az context and print MG RBAC if needed.</div></div>
+  <div class="fcard"><div class="fcard-title">🔐&nbsp; Identity — no secrets</div><div class="fcard-body">One UAMI: Reader on management groups, contained SQL database user (Entra-only, no SQL logins), Storage Blob Data Contributor. Shared keys disabled. No Key Vault needed in v1.</div></div>
+  <div class="fcard"><div class="fcard-title">🛡&nbsp; Network Security Perimeter</div><div class="fcard-body">SQL server + storage associated. SQL NSP is <b>public preview</b> (storage GA); <code>AQR_SQL_NETWORK=privateEndpoint</code> is the GA alternative. Inbound: managed identities from the AQR subscription.</div></div>
+  <div class="fcard"><div class="fcard-title">🚀&nbsp; <code>azd up</code></div><div class="fcard-body">Bicep provisions RG, App Service, UAMI, Azure SQL, storage, NSP (or VNet + private endpoints), App Insights, Entra app. Hooks check az context, create the DB user, print MG RBAC if needed.</div></div>
 </div>
 
 <div class="caption">

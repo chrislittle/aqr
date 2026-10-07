@@ -1,6 +1,6 @@
 # Azure Quota Reporting (AQR) — Architecture Design
 
-> **Status:** Draft v0.1 · 2026-10-07 · initial design for review
+> **Status:** Draft v0.2 · 2026-10-07 · decisions D1–D8 applied (§13)
 > **Scope of v1:** Virtual Machine (Compute) quota — subscription quota **and** Azure Quota Groups,
 > with zonal SKU access reported separately from regional vCPU quota.
 > **Mockup:** [`docs/mockups/aqr-mockup.html`](mockups/aqr-mockup.html) (open in a browser — filters work on synthetic data)
@@ -31,9 +31,9 @@ by region, zone, VM family, CPU manufacturer, accelerator, generation, lifecycle
 - **Regional quota vs zonal access are separate columns and separate filters** (see §6).
 - Rich filtering: region/geography, zone, VM family, category, CPU manufacturer (Intel / AMD /
   Microsoft Cobalt / Ampere), architecture (x64 / Arm64), accelerator (GPU / FPGA, vendor, model),
-  generation, features, lifecycle, utilization thresholds, spot vs on-demand.
-- History/trends from scheduled snapshots.
-- Entra ID sign-in, role-based access.
+  generation, features, lifecycle, utilization thresholds.
+- **1-year history** with point-in-time ("as of") reporting.
+- Entra ID sign-in; report visibility mapped by admins, independent of Azure RBAC (§4.3).
 - Data store behind a **Network Security Perimeter (NSP)**.
 - Everything API-driven (no portal scraping, no CSV uploads). Deploy with **`azd up`**.
 
@@ -98,7 +98,7 @@ Facts from the Quota Groups doc that the report must reflect (not hide):
   restricted in a region or zone. That's exactly what §6 surfaces.
 - EA / MCA / Internal subscriptions only; IaaS compute only; public cloud only.
 
-## 4. Recommended architecture
+## 4. Architecture
 
 ![architecture](images/architecture.png)
 *(Source: [`docs/images/src/architecture.html`](images/src/architecture.html).)*
@@ -106,16 +106,15 @@ Facts from the Quota Groups doc that the report must reflect (not hide):
 ```
  Browser ──HTTPS──► App Service (Linux, .NET 10)  ◄── Easy Auth (Entra ID, app roles)
                      │  Razor Pages UI + /api/v1 (OpenAPI)
-                     │  SyncWorker (BackgroundService, blob-lease leader election)
+                     │  SyncWorker (BackgroundService · single writer via SQL app lock)
                      │
                      │ user-assigned managed identity (UAMI)
                      ├──► ARM: Resource Graph, Microsoft.Quota, Microsoft.Compute/skus, Subscriptions
                      │
-                     ├──► Logs Ingestion API (DCE + DCR) ──► Log Analytics workspace  ┐
-                     ├──► Log Analytics Query API (KQL)  ◄────────────────────────── │  Network Security
-                     └──► Storage account (blob lease, raw API archive, sync state)  ┘  Perimeter (Enforced)
-                                                                                         inbound rule: AQR subscription (MI)
- App Insights (workspace-based) ◄── telemetry + sync-health metrics
+                     ├──► Azure SQL Database  (Entra-only auth · temporal tables)  ┐ Network Security Perimeter
+                     └──► Storage account     (raw API archive · blob)             ┘ (or private endpoint, §5.2)
+
+ Application Insights (+ its Log Analytics workspace) ◄── app telemetry and sync-health metrics only, never report data
 ```
 
 ### 4.1 Components
@@ -124,21 +123,23 @@ Facts from the Quota Groups doc that the report must reflect (not hide):
 |---|---|---|
 | Web + API | **Azure App Service (Linux), .NET 10, Razor Pages + minimal APIs** | Same stack as `ghcp-credit-visibility-azure`, so the UI style and auth patterns carry over. One deployable for `azd`. |
 | Auth | **App Service Easy Auth → Entra ID**, app roles `AQR.Reader`, `AQR.Admin` | No auth code in the app. **Secretless**: Easy Auth uses the UAMI as a federated credential (`OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID`) per [Learn](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad#use-a-managed-identity-instead-of-a-secret), so there's no client secret and no Key Vault in v1. |
-| Sync | **In-process `BackgroundService`** with a **blob lease** so only one instance runs a cycle | Fewest moving parts. If the web tier scales out, the lease still guarantees a single writer. Alternative in §9. |
-| Data store | **Log Analytics workspace (custom `_CL` tables, Analytics plan)** | See §5. NSP **GA**, KQL is the filter engine, history and retention are built in. |
-| Ingestion | **Logs Ingestion API** via DCE + DCR, authenticated by UAMI | API-based, typed schema in the DCR, no shared keys. |
-| Aux storage | **Storage account (StorageV2)**, shared-key disabled | Blob lease for leader election, last-good raw API payloads for audit/replay, sync watermarks. NSP **GA**. |
-| Observability | Workspace-based Application Insights | Sync-health metrics: snapshot age, rows written, subscriptions covered vs expected, throttling. |
+| Sync | **In-process `BackgroundService`**; a single writer is guaranteed by a SQL application lock (`sp_getapplock`) | Fewest moving parts. Same pattern as `SqlDistributedLease` in `ghcp-credit-visibility-azure`. Alternative in §9. |
+| Data store (system of record) | **Azure SQL Database**, **system-versioned temporal tables**, Entra-only authentication | Decision D7, §5. Current state and 1-year history in one service, with native point-in-time queries. |
+| Raw archive | **Storage account (blob)**, shared-key disabled | Gzipped API responses for audit and replay. NSP **GA**. |
+| Observability | Workspace-based Application Insights | Sync health: snapshot age, keys seen/changed, subscriptions covered vs expected, throttling. Holds telemetry only. |
 | IaC | **Bicep + `azure.yaml`** → `azd up` | azd-native. `azd provision` creates everything, `azd deploy` publishes the app. |
 
-### 4.2 Identity and RBAC (least privilege, read-only)
+All services are Azure-native (decision D8).
+
+### 4.2 Identity and RBAC (least privilege, read-only to Azure)
 
 | Principal | Role | Scope | Purpose |
 |---|---|---|---|
 | AQR UAMI | **Reader** | Each in-scope **management group** (or the tenant root MG) | ARG `QuotaResources`/`ResourceContainers`, Resource SKUs, Subscriptions locations, and `Microsoft.Quota/groupQuotas/*/read` (Reader includes `*/read`) |
-| AQR UAMI | **Monitoring Metrics Publisher** | DCR | Logs Ingestion API |
-| AQR UAMI | **Log Analytics Reader** | Workspace | KQL queries for the UI/API |
-| AQR UAMI | **Storage Blob Data Contributor** | Storage account | Lease + archive |
+| AQR UAMI | Contained database user (`CREATE USER … FROM EXTERNAL PROVIDER`) with `db_datareader`, `db_datawriter`, `db_ddladmin` | AQR database | Reads/writes; `db_ddladmin` because the app applies EF Core migrations at startup (same as the GHCP app) |
+| Entra group (`AQR_SQL_ADMIN_GROUP_ID`) | Microsoft Entra admin of the logical server | SQL logical server | Break-glass and DBA access. **Entra-only authentication**: no SQL logins or passwords exist |
+| AQR UAMI | **Storage Blob Data Contributor** | Storage account | Raw archive |
+| AQR UAMI | Microsoft Graph `GroupMember.Read.All` (application) | Tenant | Group-overage resolution for report visibility (§4.3) |
 | Users | App role `AQR.Reader` / `AQR.Admin` (assigned to Entra groups) | Enterprise app | UI/API access |
 
 Management-group role assignments live outside the app's resource group. `azd up` can only create
@@ -173,111 +174,75 @@ Rules:
   tenants don't silently lose access.
 - Every mapping change is audited (who, when, before/after) in the data store.
 
-## 5. Data store decision
 
-You asked for the easiest and fastest store **with an NSP in front of it**. NSP support decides
-most of this (Learn, *Onboarded private link resources*,
-<https://learn.microsoft.com/azure/private-link/network-security-perimeter-concepts#onboarded-private-link-resources>,
-checked 2026-10-07):
+## 5. Data store — Azure SQL Database with temporal tables (decision D7)
 
-| Option | NSP status | Filtering / history | Effort | Verdict |
-|---|---|---|---|---|
-| **Log Analytics (Azure Monitor)** | **GA** | KQL: arbitrary filters, joins, `arg_max` latest-state, time series, `make-series`; retention per table | Low: no schema migrations, the DCR defines columns | **Recommended** |
-| Storage Tables / Parquet in Blob + in-app DuckDB | **GA** | Filtering is in the app; you build the query layer | Medium–high | Fallback if ingestion cost matters more than build time |
-| Azure SQL Database | **Public preview** | Excellent (SQL, EF Core, indexes) | Medium (migrations) | Revisit once SQL NSP is GA |
-| Cosmos DB | **Public preview** | Good for point reads, weaker for ad-hoc aggregation | Medium | Not a fit |
+### 5.1 Why
 
-**Why Log Analytics is the fastest path**
-- The data is **append-only snapshots**, which is exactly what LA is built for. "Current state" is
-  `arg_max(TimeGenerated, *) by key` over the last cycle. "Trend" is the same query over N days.
-- Every filter in §7 becomes a `where` clause; every chart is a `summarize`. No ORM, no migrations.
-- The same tables power **Azure Workbooks** and **log alerts** for free (for example, "family >
-  85 % in any region" → action group).
-- NSP is **GA** for the workspace, DCE and alert rules.
+- **It's a real system of record.** Transactional and correctable (rows can be updated or deleted
+  properly). Protected by automated point-in-time-restore backups, with long-term backup retention
+  available.
+- **History is native.** Fact tables are system-versioned temporal tables. When a current row
+  changes, SQL Server moves the old version to the history table with its validity period. No
+  history code in the app.
+- **Point-in-time reports are one clause.** `FOR SYSTEM_TIME AS OF @t` returns exactly what quota
+  looked like at any moment in the retention window. `FOR SYSTEM_TIME FROM @a TO @b` feeds trends.
+- **Retention is native.** `HISTORY_RETENTION_PERIOD = 1 YEAR` per table, with automatic background
+  cleanup of aged rows. This requires a clustered rowstore or clustered columnstore index on the
+  history table
+  ([Learn: manage temporal history retention](https://learn.microsoft.com/sql/relational-databases/tables/manage-retention-of-historical-data-in-system-versioned-temporal-tables)).
+  Applies to Azure SQL Database.
+- **Filtering is plain, indexed SQL** across every §7 dimension. The access mapping and its audit
+  trail (§4.3) are relational data too, and EF Core matches the `ghcp-credit-visibility-azure` stack.
 
-**Trade-offs to accept (and how they're handled)**
-- *Ingestion latency* (minutes): the UI shows "as of" from `AQRSyncRun_CL`, not wall-clock.
-- *Query latency* (~1–3 s): the app caches each query result keyed by `SnapshotId`. Data only changes
-  once per sync cycle, so cache hit rates are high.
-- *Cost scales with GB ingested and retained.* The main control is **write-on-change** (§9.1): a
-  quota row is written only when its usage or limit changes, so unused regions cost almost nothing
-  and **no region filter is needed** (§9.2). Also: slim typed columns, and SKU availability stored
-  at **family** grain plus only restricted SKU rows (§6.3). The doc deliberately doesn't quote a
-  dollar figure. Size it with the Azure Pricing Calculator against the measured row counts (§9.2).
+Rejected:
+- **Log Analytics**: not a system of record, and $2.76/GB ingestion (Appendix A).
+- **Table / Blob storage**: no server-side filtering or aggregation, so the app would load the
+  dataset into memory for every report.
+- **Cosmos DB**: NSP is preview there too, and it's weak at ad-hoc aggregation.
 
-**Retention: 1 year minimum.** Analytics-plan tables can be kept fully queryable for up to 730 days
-and in long-term retention for up to 12 years
-([Learn: data retention](https://learn.microsoft.com/azure/azure-monitor/logs/data-retention-configure)).
-AQR sets **analytics retention = 365 days** on every `AQR*_CL` table (`AQR_RETENTION_DAYS`, default
-365, max 730). Optional total retention beyond that (`AQR_TOTAL_RETENTION_DAYS`) uses long-term
-retention, which is cheaper but needs search jobs to query. Only the first 31 days of analytics
-retention are included in the ingestion price; the rest is billed per GB per month.
-- *Query API limits* (rows/size per query): every UI query aggregates server-side and pages.
+### 5.2 Network
 
-**NSP configuration**
-- One perimeter, one profile, associating: Log Analytics workspace, DCE, Storage account (and
-  scheduled query rules and action groups if alerts are enabled).
-- Access mode: start in **Transition (Learning)** for the first `azd up` so you can validate the access
-  logs, then flip to **Enforced** (`AQR_NSP_MODE=Enforced`).
-- Inbound rule: **subscription-based**, allowing managed identities from the AQR subscription
-  (documented NSP behavior: "allows inbound access authenticated using any managed identity from
-  the subscription"). No IP rules. Optional admin IP rule for break-glass portal queries.
-- NSP access logs are sent to the same workspace for auditing.
-
-### 5.1 Store decision reopened — cost evidence (2026-10-07)
-
-> The Log Analytics recommendation above optimized for **build speed** (KQL does the filtering)
-> and NSP-GA status. It was **not priced**, and a log analytics service isn't a natural **system of
-> record**. Rows can't be corrected in place, and data lifetime is tied to a retention setting.
-> This section is the evidence for re-deciding.
-
-**Unit prices.** Azure Retail Prices API, `eastus2`, list price, pulled live 2026-10-07:
-
-| Store | Meter | Price |
+| `AQR_SQL_NETWORK` | What gets deployed | Status |
 |---|---|---|
-| Log Analytics (Analytics plan) | Data ingestion | $2.76 / GB (first 5 GB/month per billing account free, shared with all other workspaces in that billing account) |
-| | Analytics retention beyond 31 days | $0.12 / GB-month |
-| | Long-term retention ("Data Archive") | $0.02 / GB-month; queried via search jobs at $0.005 / GB scanned |
-| Blob storage (GPv2, LRS) | Hot data stored | $0.0184 / GB-month; writes $0.05 / 10K |
-| | Cool data stored | $0.01 / GB-month; writes $0.10 / 10K |
-| Table storage (LRS) | Data stored | $0.045 / GB-month; any operation $0.00036 / 10K |
-| Azure SQL Database | Basic (5 DTU, 2 GB max) | $0.161 / day |
-| | Standard S0 (10 DTU, 250 GB included) | $0.4839 / day |
+| **`nsp`** (default — your stated requirement) | SQL logical server and storage account associated with one Network Security Perimeter profile. Inbound rule: **subscription-based**, allowing managed identities from the AQR subscription. No IP rules. Start in **Transition** mode, then switch to **Enforced** (`AQR_NSP_MODE`). In Enforced mode a denied login fails with error 42118. | **SQL Database NSP is public preview** (Supplemental Terms of Use for Azure Previews apply; Azure public cloud only). Storage NSP is GA. [Learn](https://learn.microsoft.com/azure/azure-sql/database/network-security-perimeter) |
+| `privateEndpoint` | VNet, App Service regional VNet integration, private endpoints for SQL and storage, `privatelink.database.windows.net` / `privatelink.blob.core.windows.net` private DNS zones, public network access disabled | GA |
 
-**Volume model.** Every input here is an assumption until the sizing query in §9.2 is run against a
-real tenant: 200 subscriptions × 40 regions × 80 quota rows = 640,000 keys, ~350 bytes/row,
-hourly sync.
+Switching between the two is an azd parameter. The app code doesn't change. If preview terms aren't
+acceptable for production, deploy `privateEndpoint` now and move to `nsp` when SQL NSP is GA.
 
-| Write strategy | Ingested / month | Stored after 1 year | Log Analytics / month at year end | Blob hot / month | Table / month |
-|---|---|---|---|---|---|
-| Write-on-change (1 % of keys change per hour) | 1.6 GB | ~20 GB | ~$4.45 ingest + ~$2.35 retention | ~$0.36 | ~$0.88 |
-| Hourly full snapshot | 161 GB | ~1.9 TB | ~$445 ingest + ~$232 retention | ~$36 | ~$87 |
+Either way: Entra-only authentication, minimum TLS 1.2, no SQL logins, and Microsoft Defender for
+SQL optional (`AQR_SQL_DEFENDER`).
 
-Azure SQL S0 is a flat ~$14.70/month (0.4839 × 30.4) for either row, up to 250 GB. Basic's 2 GB
-cap is too small for a year of history.
+### 5.3 Sizing and cost
 
-**What the numbers say**
-- Log Analytics charges **$2.76 per GB ingested**. Blob has no per-GB ingest charge, only
-  per-operation writes, which are negligible when a sync writes a few files. Keeping data
-  queryable costs **~6.5× blob hot** per GB-month ($0.12 vs $0.0184).
-- With write-on-change, every option is a few dollars a month, so cost doesn't decide between
-  them. Without write-on-change, Log Analytics is the most expensive by a wide margin.
-- Log Analytics' cost is highly sensitive to the write strategy and the row-size assumption. Blob
-  and SQL aren't.
+Prices are list prices for `eastus2`, pulled live from the Azure Retail Prices API on 2026-10-07.
 
-**Candidates for the system of record**
+| Option | Price | Fit |
+|---|---|---|
+| **Standard S1** (20 DTU, 250 GB included) — **default** | $0.9677/day ≈ **$29.42/month** | Headroom for the first full baseline load and report aggregations |
+| Standard S0 (10 DTU, 250 GB included) | $0.4839/day ≈ $14.71/month | Viable after measurement if DTU stays low |
+| Standard S3 (100 DTU) | $4.8387/day ≈ $147.10/month | Only if reports need columnstore. Columnstore isn't available below S3 |
+| General Purpose **serverless** (Gen5) | $0.521758 per vCore-hour + $0.115/GB-month storage | Not a fit. The hourly sync keeps auto-pause from saving much, a paused database adds about a minute of resume delay on the first page view, and never pausing at the 0.5 vCore minimum is ≈ $190/month |
+| PITR backup storage (LRS) beyond the included amount | $0.10/GB-month | — |
 
-| | Blob (Parquet) + embedded query engine (DuckDB) | Azure SQL Database (temporal tables) | Table storage | Log Analytics |
-|---|---|---|---|---|
-| NSP | **GA** (storage account) | **Public preview**; GA alternative is a private endpoint + VNet integration | **GA** | **GA** |
-| History / "as of" | Change files plus compacted current state; `arg_max` / window queries | **Native**: system-versioned temporal tables, `FOR SYSTEM_TIME AS OF` | Manual; weak | `arg_max` over time |
-| Rich filtering | SQL in-process over a small dataset (MBs–GBs) | SQL with indexes | Only PartitionKey/RowKey; everything else in app memory | KQL |
-| Durability / control | Versioning, soft delete, immutability, lifecycle to cool | PITR backups, LTR backups | Basic | Retention-bound; purge only |
-| Cost at modeled volume | Lowest (cents) | ~$15 / month flat | Low | Low with write-on-change, high without |
-| Build effort | Medium: compaction job + query layer | Low–medium: EF Core migrations; same stack as `ghcp-credit-visibility-azure` | High for reporting | Low |
+Monthly figures use 30.4 days (730 hours).
 
-Mapping (D6) and the audit trail are small relational data. They fit SQL natively; with blob they'd
-need a small JSON document per grant set.
+**Volume model.** These are assumptions until the §9.2 sizing query is run against your tenant:
+640,000 current quota keys, 1 % changing per hourly sync ≈ 154,000 history rows/day ≈ 56 M rows
+per year. With narrow typed columns and integer surrogate keys (~120 bytes/row) plus page
+compression and indexes, that's roughly 10–15 GB after a year, well inside the 250 GB included
+with S0/S1. `sync.Run` records keys seen/changed every run (§9), so the real numbers replace these
+within days. Scale the tier from the measured DTU %, not from this estimate.
+
+### 5.4 Retention
+
+- Every temporal table: `HISTORY_RETENTION_PERIOD = 1 YEAR` (`AQR_HISTORY_RETENTION`, can be raised
+  to longer periods or `INFINITE`). This meets "at least a year".
+- Temporal history cleanup must be enabled at database level (`TEMPORAL_HISTORY_RETENTION ON`). The
+  migration sets it and the Admin page verifies it.
+- Backups: point-in-time restore window 7 days by default (`AQR_SQL_PITR_DAYS`, up to 35). Optional
+  long-term backup retention for compliance. History lives inside the database, so backups protect it.
 
 ## 6. Regional quota vs zonal access (first-class requirement)
 
@@ -349,90 +314,107 @@ convention (`a` = AMD, `p` = Arm) is the documented rule, but it doesn't cover e
 HB-series is AMD without an `a`). Every catalog row carries a `source` Learn URL. Unknown families
 show as `Unclassified` rather than being guessed.
 
-## 8. Data model (Log Analytics custom tables)
+## 8. Data model (Azure SQL Database)
 
-All tables carry `TimeGenerated`, `SnapshotId` (the sync cycle that wrote the row), `TenantId`.
-Fact tables are **write-on-change** (§9.1). A row means "from this time, this key had these values".
-`IsDeleted = true` is a tombstone for a key that disappeared (subscription removed from scope, family
-no longer returned).
+Schemas: `dim` (reference data), `quota` and `zone` (facts), `access` (report visibility), `sync`
+(operations). Every table marked **temporal** is
+`SYSTEM_VERSIONING = ON (HISTORY_TABLE = …, HISTORY_RETENTION_PERIOD = 1 YEAR)`, with a clustered
+rowstore index and page compression on the history table.
 
-| Table | Key | Main columns | Write rule |
+| Table | Temporal | Key | Columns |
 |---|---|---|---|
-| `AQRSubQuota_CL` | Sub, Location, QuotaName | SubscriptionName, MgPath, QuotaLocalizedName, QuotaKind (`Family`/`RegionalTotal`), Family, Usage, Limit, Unit, QuotaGroup, IsDeleted | On change of Usage, Limit, QuotaGroup or name |
-| `AQRGroupQuota_CL` | MgId, Group, Location, Family | GroupLimit, AvailableLimit (unallocated), AllocatedTotal, GroupUsage, MemberCount, IsDeleted | On change |
-| `AQRGroupAlloc_CL` | MgId, Group, Sub, Location, Family | QuotaAllocated, ShareableQuota, IsDeleted | On change |
-| `AQRFamilyZone_CL` | Sub, Location, Family | ZoneStatus, SkusTotal, SkusRegionOpen, OpenZonesLogical, OpenZonesPhysical, RestrictedZonesLogical, OfferedZonesLogical, ReasonCodes, IsDeleted | On change |
-| `AQRSkuRestriction_CL` | Sub, Location, Sku | Family, RestrictionType (`Location`/`Zone`), ZonesLogical, ZonesPhysical, ReasonCode, IsDeleted | Restricted SKUs only; on change; tombstone when lifted |
-| `AQRZoneMap_CL` | Sub, Location, ZoneLogical | ZonePhysical | On change (effectively once per sub) |
-| `AQRFamily_CL` | Family | Category, CpuManufacturer, Architecture, AcceleratorType, AcceleratorVendor, AcceleratorModel, Generation, Features, Lifecycle, MinVcpu, MaxVcpu, Source | On change |
-| `AQRSyncRun_CL` | SnapshotId, Stage | StartedAt, EndedAt, Status, SubsExpected, SubsCovered, RowsSeen, RowsChanged, Throttled, Errors | Every run (this is the heartbeat) |
+| `dim.Subscription` | ✔ | SubscriptionId | Name, ManagementGroupPath, State, QuotaGroupKey |
+| `dim.Region` | — | Region | Geography, PhysicalLocation, HasZones |
+| `dim.VmFamily` | ✔ | FamilyId (quota name, e.g. `standardDSv5Family`) | Series, Category, CpuManufacturer, Architecture, AcceleratorType, AcceleratorVendor, AcceleratorModel, Generation, Features, Lifecycle, MinVcpu, MaxVcpu, SourceUrl |
+| `quota.SubscriptionQuota` | ✔ | SubscriptionId, Region, QuotaName | Kind (`Family`/`RegionalTotal`), FamilyId, Usage, Limit |
+| `quota.QuotaGroup` | ✔ | ManagementGroupId, GroupName | DisplayName, ProvisioningState |
+| `quota.QuotaGroupMember` | ✔ | ManagementGroupId, GroupName, SubscriptionId | — |
+| `quota.GroupQuota` | ✔ | ManagementGroupId, GroupName, Region, FamilyId | GroupLimit, AvailableLimit (unallocated), AllocatedTotal, GroupUsage |
+| `quota.GroupAllocation` | ✔ | ManagementGroupId, GroupName, SubscriptionId, Region, FamilyId | QuotaAllocated, ShareableQuota |
+| `zone.FamilyZoneAccess` | ✔ | SubscriptionId, Region, FamilyId | ZoneStatus, SkusTotal, SkusRegionOpen, OpenZonesLogical, OpenZonesPhysical, RestrictedZonesLogical, OfferedZonesLogical, ReasonCodes |
+| `zone.SkuRestriction` | ✔ | SubscriptionId, Region, Sku | FamilyId, RestrictionType (`Location`/`Zone`), ZonesLogical, ZonesPhysical, ReasonCode (restricted SKUs only) |
+| `zone.ZoneMapping` | ✔ | SubscriptionId, Region, ZoneLogical | ZonePhysical |
+| `access.Grant` | ✔ | GrantId | PrincipalObjectId, PrincipalType (`Group`/`User`), TargetType (`ManagementGroup`/`QuotaGroup`/`Subscription`), TargetId, ChangedBy. The temporal history **is** the audit trail of who changed what, and when. |
+| `sync.Run` | — | RunId, Stage | StartedUtc, EndedUtc, Status, SubsExpected, SubsCovered, KeysSeen, KeysChanged, Throttled, Errors |
+| `sync.Coverage` | — | RunId, SubscriptionId, Stage | Status, Error, ObservedUtc |
 
-All tables: analytics retention = `AQR_RETENTION_DAYS` (default **365**).
+**Design rules that keep history honest and small**
+1. **Never touch an unchanged row.** A temporal table writes a history row for **every** `UPDATE`,
+   even one that sets the same values. The sync's `MERGE` therefore updates only when a value
+   actually differs (`WHEN MATCHED AND (s.Usage <> t.Usage OR s.Limit <> t.Limit …)`).
+2. **No volatile columns in temporal tables.** "Last seen" timestamps would change every hour and
+   flood history. Freshness lives in `sync.Run` / `sync.Coverage` instead.
+3. **Deletes are real deletes.** When a key disappears, the row is `DELETE`d. SQL moves it to
+   history with its end time, so "as of" queries before the delete still see it. A key missing from
+   a **failed or partial** run is never deleted (§9).
 
-Example — the explorer's base query (current state = latest row per key, tombstones dropped):
+**Example — explorer query, current or "as of" any past moment**
 
-```kusto
-let asOf = now();                      // or a user-picked point in time, for "as of" reports
-AQRSubQuota_CL
-| where TimeGenerated <= asOf and QuotaKind == "Family"
-| summarize arg_max(TimeGenerated, *) by SubscriptionId, Location, QuotaName
-| where not(IsDeleted)
-| join kind=leftouter (AQRFamily_CL | summarize arg_max(TimeGenerated, *) by Family) on Family
-| join kind=leftouter (AQRFamilyZone_CL | where TimeGenerated <= asOf
-                       | summarize arg_max(TimeGenerated, *) by SubscriptionId, Location, Family
-                       | where not(IsDeleted)) on SubscriptionId, Location, Family
-| where Location in ({regions}) and CpuManufacturer in ({vendors}) and ZoneStatus in ({zoneStatus})
-| extend Available = Limit - Usage, UtilPct = iff(Limit > 0, 100.0 * Usage / Limit, real(null))
-| order by UtilPct desc
+```sql
+DECLARE @asOf datetime2(0) = COALESCE(@requestedAsOf, SYSUTCDATETIME());
+
+SELECT q.SubscriptionId, s.Name, q.Region, f.Series, f.CpuManufacturer, f.Architecture,
+       q.Usage, q.Limit, q.Limit - q.Usage AS Available,
+       CAST(100.0 * q.Usage / NULLIF(q.Limit, 0) AS decimal(5,1)) AS UtilPct,
+       z.ZoneStatus, z.OpenZonesLogical, z.OpenZonesPhysical
+FROM quota.SubscriptionQuota FOR SYSTEM_TIME AS OF @asOf AS q
+JOIN dim.Subscription        FOR SYSTEM_TIME AS OF @asOf AS s ON s.SubscriptionId = q.SubscriptionId
+JOIN dim.VmFamily            FOR SYSTEM_TIME AS OF @asOf AS f ON f.FamilyId = q.FamilyId
+LEFT JOIN zone.FamilyZoneAccess FOR SYSTEM_TIME AS OF @asOf AS z
+       ON z.SubscriptionId = q.SubscriptionId AND z.Region = q.Region AND z.FamilyId = q.FamilyId
+WHERE q.Kind = 'Family'
+  AND q.SubscriptionId IN (SELECT SubscriptionId FROM access.VisibleSubscriptions(@userObjectId, @groupIdsJson))
+  AND (@regionsJson IS NULL OR q.Region IN (SELECT value FROM OPENJSON(@regionsJson)))
+  AND (@cpuJson     IS NULL OR f.CpuManufacturer IN (SELECT value FROM OPENJSON(@cpuJson)))
+ORDER BY UtilPct DESC;
 ```
 
-The same query with `asOf` set to a past date answers "what did quota look like on 1 March?" for
-any date in the retention window. That's why write-on-change is a better fit than hourly full
-snapshots for a 1-year history: point-in-time reads stay exact.
-
-User-supplied filter values are passed as **query parameters / allow-listed enums**, never
-concatenated into KQL.
+Every filter value is a **bound parameter** (JSON arrays read with `OPENJSON`) or an allow-listed
+enum, never concatenated into SQL. `access.VisibleSubscriptions` applies the §4.3 grants against
+**current** management-group paths. Admins bypass it.
 
 ## 9. Sync design
 
 ```
-every AQR_SYNC_INTERVAL (default 1h) — leader holds blob lease
-  1. Inventory    ARG ResourceContainers → subs in scope (MG list), names, MG path
-  2. SubQuota     ARG QuotaResources (paged, skipToken)            → AQRSubQuota_CL
+every AQR_SYNC_INTERVAL (default 1h) — single writer via sp_getapplock (session lock on the AQR database)
+  1. Inventory    ARG ResourceContainers → dim.Subscription (names, MG path, state)
+  2. SubQuota     ARG QuotaResources (paged, skipToken) → quota.SubscriptionQuota
                   gap check: subs/regions missing → Compute Usages API (S2)
-  3. Groups       every 4h: per MG → groups → members → limits/usages per region → AQRGroup*_CL
+  3. Groups       every 4h: per MG → groups → members → limits/usages per region
+                  → quota.QuotaGroup, QuotaGroupMember, GroupQuota, GroupAllocation
   4. Zones/SKUs   daily: per sub → locations (zone map) → skus?$filter=location per region
-                  → AQRZoneMap_CL, AQRFamilyZone_CL, AQRSkuRestriction_CL
-  5. Catalog      on startup/deploy: catalog/vm-families.json ⨝ observed families → AQRFamily_CL
-  6. Record       AQRSyncRun_CL per stage (+ App Insights metrics)
+                  → zone.ZoneMapping, zone.FamilyZoneAccess, zone.SkuRestriction
+  5. Catalog      on startup: catalog/vm-families.json ⨝ observed families → dim.VmFamily
+  6. Record       sync.Run + sync.Coverage per stage (+ App Insights metrics)
 ```
 
 ### 9.1 Write-on-change
 
-Each stage compares what it just read against the **last values written** per key. Those are held
-in a compact state blob (`state/{stage}.json.gz`, one hash per key) in the NSP-protected storage
-account. Only keys whose values changed are sent to the Logs Ingestion API. Keys that vanished get
-a tombstone row. `AQRSyncRun_CL` records `RowsSeen` and `RowsChanged` every run, so "nothing
-changed" and "sync didn't run" never look the same.
+Each stage bulk-loads what it just read into a session temp table (`SqlBulkCopy`), then runs one
+`MERGE` per target inside a transaction:
+- **insert** new keys;
+- **update only rows whose values differ** (rule 1 in §8). Unchanged keys aren't touched, so they
+  create no history;
+- **delete** keys that are gone, but only for subscriptions the stage **fully covered** in this run.
 
-If the state blob is lost or corrupt, the next run treats every key as changed and writes one full
-baseline. That's safe, just one larger ingestion.
+SQL Server's temporal versioning turns those updates and deletes into history automatically. The
+database itself holds the "last written values", so no separate state store is needed.
+`sync.Run.KeysSeen` / `KeysChanged` are recorded every run, so "nothing changed" and "sync didn't
+run" never look the same.
 
 ### 9.2 Region scope — measured, not guessed
 
-You asked how we'd know which regions matter. **We can't know in advance**, and the original
-"only regions with usage" default was a guess. It would also hide exactly what capacity planning
-needs: quota sitting in regions you haven't deployed to yet. So:
+We can't know in advance which regions matter, and filtering by "regions with usage" would hide
+the quota sitting in regions you haven't deployed to yet. So:
 
-- **Collect every region the APIs return.** No region filter in v1. ARG `QuotaResources` returns
-  the regions it has for each subscription, and AQR stores what's returned.
-- **Write-on-change makes that cheap.** A region nobody uses has a static limit and zero usage. It's
-  written **once** at baseline, then never again until something changes. Ingestion volume is
-  driven by **how often quota actually moves**, not by how many regions exist.
-- **The real numbers come from the first sync.** `AQRSyncRun_CL` records keys seen vs. changed per
-  run. After a week, that gives a measured daily change rate to put into the Pricing Calculator.
-- **Pre-deployment sizing (optional):** this read-only ARG query, run by someone with Reader in the
-  target tenant, gives the baseline row count before anything is deployed:
+- **Collect every region the APIs return.** No region filter in v1.
+- **Write-on-change makes that cheap.** An unused region has a static limit and zero usage. It's
+  written once at baseline and creates no history until something changes. Growth is driven by
+  **how often quota actually moves**, not by how many regions exist.
+- **Measure.** `sync.Run` records keys seen vs. changed per run, so after a week the history growth
+  rate is a measured number (§5.3).
+- **Pre-deployment sizing (optional):** this read-only Resource Graph query, run by someone with
+  Reader in the target tenant, gives the baseline key count before anything is deployed:
 
 ```kusto
 QuotaResources
@@ -444,9 +426,11 @@ QuotaResources
             RowsWithUsage = countif(usage > 0)
 ```
 
-`Rows` is the baseline write. `RowsWithUsage` approximates the keys that can change hourly; the
-rest only change on quota increases or allocations. An `AQR_REGIONS` allow-list exists as an
-**optional** override for tenants that want to exclude regions by policy. It's off by default.
+`Rows` is the baseline row count. `RowsWithUsage` approximates the keys that can change hourly;
+the rest only change on quota increases or allocations. An `AQR_REGIONS` allow-list exists as an
+**optional** policy override. It's off by default.
+
+### 9.3 Operational rules
 
 - **Throttling:** ARG and ARM throttle per principal. The sync uses bounded concurrency
   (`AQR_MAX_PARALLEL`, default 4), honours `Retry-After`, and backs off on `429`. ARG queries batch
@@ -455,11 +439,11 @@ rest only change on quota increases or allocations. An `AQR_REGIONS` allow-list 
   shown on the Admin page. A stage that covers less than 100 % is a **warning**, not a silent success.
   Subscriptions without `Microsoft.Quota` registration, and MGs the identity can't read, are listed
   by name.
-- **Partial failure** never writes tombstones. A subscription or region missing from a failed or
-  partial run is treated as "not observed", not "deleted". The UI shows each stage's own "as of" time.
-- **Raw archive:** each API response page is gzipped to blob (`raw/{date}/{stage}/…`), with a retention
-  policy, for audit and replay.
-- **Manual refresh:** Admins can trigger a cycle (`POST /api/v1/sync`), still lease-guarded.
+- **Partial failure never deletes.** A subscription or region missing from a failed or partial run
+  is "not observed", not "deleted". The UI shows each stage's own "as of" time.
+- **Raw archive:** each API response page is gzipped to blob (`raw/{date}/{stage}/…`), with a
+  lifecycle policy, for audit and replay.
+- **Manual refresh:** Admins can trigger a cycle (`POST /api/v1/sync`). It takes the same lock.
 
 *Alternative:* move the sync into an Azure Functions (Flex Consumption) timer app when you want
 separate scaling or deploys. The code stays the same (shared class library); `azure.yaml` gains a
@@ -486,23 +470,44 @@ The UI calls the same endpoints, so the API is exercised from day one.
 
 ```
 aqr/
-├─ azure.yaml                 # service "web" → src/Aqr.Web (appservice, dotnet)
+├─ azure.yaml                 # service "web" → src/Aqr.Web (appservice, dotnet); hooks
 ├─ infra/
 │  ├─ main.bicep              # subscription-scope: RG + modules
 │  ├─ main.parameters.json    # maps AZD env vars
-│  └─ modules/ appservice.bicep, identity.bicep, loganalytics.bicep (tables+DCR+DCE),
-│              storage.bicep, nsp.bicep, appinsights.bicep, entra-app.bicep (Microsoft.Graph Bicep ext),
-│              rbac-mg.bicep (conditional)
-├─ src/ Aqr.Web (UI+API+SyncWorker) · Aqr.Core (clients, model, KQL) · Aqr.Tests
+│  └─ modules/ appservice.bicep, identity.bicep, sql.bicep (server, database, Entra-only admin),
+│              storage.bicep, nsp.bicep  ─┐ chosen by AQR_SQL_NETWORK
+│              network.bicep (VNet + PEs) ┘
+│              appinsights.bicep, entra-app.bicep (Microsoft Graph Bicep extension), rbac-mg.bicep (conditional)
+├─ src/ Aqr.Web (UI + API + SyncWorker) · Aqr.Core (ARM clients, model, EF Core + migrations) · Aqr.Tests
 ├─ catalog/vm-families.json
 └─ docs/
 ```
 
-`azd env` settings: `AZURE_LOCATION`, `AQR_MANAGEMENT_GROUP_IDS`, `AQR_RETENTION_DAYS` (default 365),
-`AQR_REGIONS` (optional allow-list, off by default), `AQR_SYNC_INTERVAL`, `AQR_NSP_MODE`
-(`Learning`/`Enforced`), `AQR_ADMIN_GROUP_ID`, `AQR_READER_GROUP_ID`.
-Hooks: `preprovision` checks the deployer's az context against `AZURE_SUBSCRIPTION_ID` and fails on
-mismatch. `postprovision` prints MG RBAC commands if they weren't applied and triggers the first sync.
+`azd env` settings:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `AZURE_LOCATION` | — | Deployment region |
+| `AQR_MANAGEMENT_GROUP_IDS` | — | Management groups to report on |
+| `AQR_SQL_NETWORK` | `nsp` | `nsp` (SQL NSP preview) or `privateEndpoint` (GA), §5.2 |
+| `AQR_NSP_MODE` | `Learning` | NSP Transition (Learning) mode, then `Enforced` |
+| `AQR_SQL_SKU` | `S1` | Database tier, §5.3 |
+| `AQR_HISTORY_RETENTION` | `1 YEAR` | Temporal history retention, §5.4 |
+| `AQR_SQL_PITR_DAYS` | `7` | Point-in-time restore window |
+| `AQR_SQL_ADMIN_GROUP_ID` | — | Entra admin group for the SQL server |
+| `AQR_ADMIN_GROUP_ID` / `AQR_READER_GROUP_ID` | — | App role assignments |
+| `AQR_SYNC_INTERVAL` | `1h` | Sync cadence |
+| `AQR_REGIONS` | off | Optional region allow-list |
+
+Hooks:
+- `preprovision` checks the deployer's az context against `AZURE_SUBSCRIPTION_ID` and fails on a
+  mismatch.
+- `postprovision`:
+  - creates the UAMI's contained database user (`CREATE USER … FROM EXTERNAL PROVIDER`) with the
+    deployer's Entra token. The deployer must be in the SQL admin group;
+  - prints MG RBAC commands if they weren't applied;
+  - triggers the first sync.
+
 The Entra app registration and FIC are created with the Microsoft Graph Bicep extension. If the
 deployer lacks Graph permissions, a hook script does it instead.
 
@@ -510,9 +515,9 @@ deployer lacks Graph permissions, a hook script does it instead.
 
 | Phase | Content |
 |---|---|
-| **1 — VM quota MVP** | Sync S1, S3–S7 (family + Total Regional vCPUs); Overview, Explorer, Quota Groups, Zones, Trends (1-year history), Admin pages; Entra auth; NSP; `azd up` |
+| **1 — VM quota MVP** | Sync S1, S3–S7 (family + Total Regional vCPUs); Overview, Explorer, Quota Groups, Zones, Trends (1-year history, "as of"), Admin and access-mapping pages; Entra auth; Azure SQL temporal store behind NSP; `azd up` |
 | 1.5 — API | OpenAPI/Swagger, CSV export, service-principal access |
-| 2 — Insight | Spot/low-priority and Dedicated Host quota; forecast to limit; Workbooks + log alerts (threshold, "quota but zone-blocked"); group-rebalance suggestions (read-only); group request history |
+| 2 — Insight | Spot/low-priority and Dedicated Host quota; forecast to limit; threshold alerts ("family > N %", "quota but zone-blocked") via Azure Monitor from sync metrics; group-rebalance suggestions (read-only); group request history |
 | 3 — Beyond compute | `Microsoft.Quota/usages` providers (Network, MachineLearningServices, HPC Cache, Storage, Purview), service-specific usages APIs where the Quota RP doesn't cover them |
 | 4 — Actions (optional) | Quota increase / group allocate via Quota API with an approval step; needs the Quota Request Operator roles |
 
@@ -524,26 +529,49 @@ deployer lacks Graph permissions, a hook script does it instead.
 |---|---|---|
 | D1 | Tenants | Single tenant for now |
 | D2 | Region scope | All regions the APIs return; write-on-change keeps it cheap; measure before tuning (§9.2) |
-| D3 | History | **At least 1 year**: analytics retention 365 days on all AQR tables (§5) |
+| D3 | History | **At least 1 year**: temporal `HISTORY_RETENTION_PERIOD = 1 YEAR`, raisable (§5.4) |
 | D4 | MVP quota types | VM family + Total Regional vCPUs only. Spot/low-priority and Dedicated Host → phase 2 |
 | D5 | Front door | Public App Service + Entra ID sign-in is acceptable for now |
-| D6 | Who sees what | **Admin-maintained mapping (option B below).** Report visibility is deliberately separate from Azure RBAC: someone can see a report without having access to the subscription in Azure, and Azure access doesn't grant report visibility (§4.3) |
+| D6 | Who sees what | **Admin-maintained mapping (option B below).** Report visibility is deliberately separate from Azure RBAC (§4.3) |
+| D7 | Data store | **Azure SQL Database with system-versioned temporal tables** (§5). Log Analytics holds app telemetry only |
+| D8 | Services | **Azure-native services only.** No third-party or open-source engines |
 
 **Open**
 
-1. **Data store (system of record).** Under review; see §5.1.
+1. **SQL network mode for production:** `nsp` (SQL NSP is public preview) or `privateEndpoint`
+   (GA) until SQL NSP is GA (§5.2)? The design defaults to `nsp` per the original requirement.
 
 **Resolved — row-level scoping options considered (D6 chose B)**
 
-1. **Who sees which subscriptions (row-level scoping)?** App roles only control *whether* someone
-   can use AQR. This question is about *which data* they see once signed in. Options:
+| Option | How it works | Pros | Cons |
+|---|---|---|---|
+| A. Everyone sees everything | Anyone with `AQR.Reader` sees every subscription AQR syncs | Simplest | No separation: an app team member sees other teams' quota and usage |
+| **B. Admin-maintained mapping** | Admins map Entra groups → management groups / quota groups / subscriptions | Report visibility independent of Azure RBAC | Someone maintains it. Mitigated by mapping to MGs and quota groups, which resolve their subscriptions at query time |
+| C. Mirror Azure RBAC | Show only subscriptions the user can already read in Azure | No mapping to maintain | Couples reporting to Azure access, which is what we want to avoid; users need Azure access to see reports |
 
-   | Option | How it works | Pros | Cons |
-   |---|---|---|---|
-   | **A. Everyone sees everything** | Anyone with `AQR.Reader` sees every subscription AQR syncs | Simplest; one query path; good for a central platform/capacity team | An app team member sees other teams' subscriptions, quota and usage |
-   | **B. Admin-maintained mapping** | Admins map Entra groups → management groups / quota groups / subscriptions in an Admin page (the GHCP-visibility cost-center pattern) | Tailored views; no dependency on Azure RBAC | Someone has to maintain the mapping; it drifts from real access |
-   | **C. Mirror Azure RBAC** | AQR shows only subscriptions the signed-in user can already read in Azure (checked with their own token via ARG, cached per user) | No mapping to maintain; never shows more than the user could see in the portal anyway | Needs a delegated Azure Resource Manager permission on the app registration; per-user lookup on sign-in |
+## Appendix A — store cost evidence that informed D7 (2026-10-07)
 
-   Quota data isn't secret in itself, but usage per family and region reveals what a team runs and
-   where. **B was chosen** because it keeps reporting visibility independent of Azure RBAC.
-   C would couple the two, which is exactly what we want to avoid. A gives no separation at all.
+**Unit prices.** Azure Retail Prices API, `eastus2`, list price, pulled live 2026-10-07:
+
+| Store | Meter | Price |
+|---|---|---|
+| Log Analytics (Analytics plan) | Data ingestion | $2.76 / GB (first 5 GB/month per billing account free, shared with all other workspaces in that billing account) |
+| | Analytics retention beyond 31 days | $0.12 / GB-month |
+| | Long-term retention ("Data Archive") | $0.02 / GB-month; queried via search jobs at $0.005 / GB scanned |
+| Blob storage (GPv2, LRS) | Hot data stored | $0.0184 / GB-month; writes $0.05 / 10K |
+| Table storage (LRS) | Data stored | $0.045 / GB-month; any operation $0.00036 / 10K |
+| Azure SQL Database | Standard S0 / S1 / S3 | $0.4839 / $0.9677 / $4.8387 per day (250 GB included) |
+| | General Purpose serverless Gen5 compute | $0.521758 / vCore-hour; storage $0.115 / GB-month |
+
+**Volume model** (assumptions, see §9.2): 640,000 keys, ~350 bytes/row as ingested log records, hourly sync.
+
+| Write strategy | Ingested / month | Stored after 1 year | Log Analytics / month at year end | Blob hot / month | Table / month |
+|---|---|---|---|---|---|
+| Write-on-change (1 % of keys change per hour) | 1.6 GB | ~20 GB | ~$4.45 ingest + ~$2.35 retention | ~$0.36 | ~$0.88 |
+| Hourly full snapshot | 161 GB | ~1.9 TB | ~$445 ingest + ~$232 retention | ~$36 | ~$87 |
+
+Conclusions:
+- With write-on-change, storage cost doesn't decide between the options; every one is a few
+  dollars a month. Function does: system of record, native history and server-side filtering.
+- Log Analytics' cost is highly sensitive to the write strategy. SQL is a flat tier price up to its
+  included storage.
