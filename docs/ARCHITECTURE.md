@@ -547,7 +547,7 @@ Phase 1 code, infra and tests are committed (69 tests pass). **Nothing has been 
 
 | # | Item | Owner |
 |---|---|---|
-| O1 | ~~Sign up for the Azure SQL Database container Private Preview~~ (done 2026-10-07, **awaiting approval**). Then install WSL (`wsl --install`, admin + reboot), sign in to the registry, run `scripts/dev-sql.ps1` | Chris |
+| O1 | ~~Sign up for the Azure SQL Database container Private Preview~~ (done 2026-10-07, **awaiting approval**). ~~Install WSL~~ (done: WSL 3.0.1, `wslc` verified, no distro needed). On approval: `wslc login sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io -u <username>`, then `scripts/dev-sql.ps1` | Chris |
 | O2 | Run the 4 SQL integration tests against the container (`AQR_TEST_SQL`). Validate once against cloud Azure SQL too (the container has known restriction-enforcement gaps) | next session |
 | O3 | Choose the target subscription and management groups. Confirm Entra rights to create the app registration and groups. Get someone with management-group rights to assign Reader | Chris |
 | O4 | First `azd up` to a test subscription: Graph extension, secretless Easy Auth sign-in, SQL access through the NSP (Learning → Enforced), first live sync | next session |

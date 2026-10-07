@@ -30,7 +30,7 @@ The container is in **Private Preview** and is for development only. Production 
    Docker Desktop or Podman also work.
 3. **Sign in to the registry.** The password is a secret, so only you can do this:
    ```powershell
-   wslc login sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io <username>      # WSL containers
+   wslc login sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io -u <username>   # WSL containers (no Linux distro needed)
    # or: docker login sqldbpreview-dpgaeqhmgphzd4bk.azurecr.io -u <username>
    ```
 
